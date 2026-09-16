@@ -1,0 +1,4 @@
+# dsh-usage-bar bundle: mount the Node-side usage aggregator.
+- insert:
+    - id: dsh-usage-bar
+      name: 'dsh-usage-bar'

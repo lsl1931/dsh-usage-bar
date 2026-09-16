@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repository, regardless of the
+# contributor's core.autocrlf setting, so diffs stay stable across platforms.
+* text=auto eol=lf
+
+# Generated artifacts: keep them out of diffs and language stats.
+lib/** linguist-generated=true
