@@ -51,12 +51,19 @@ function cacheHitPercent(t) {
 }
 
 function fetchSummary() {
-  return fetch(BASE + "/summary", { cache: "no-store" })
+  return fetch(BASE + "/summary", { cache: "no-store" }).then((res) => (res.ok ? res.json() : Promise.reject()));
+}
+
+// The reset secret is issued behind the harness trust fence on its own POST
+// route; the summary endpoint no longer hands it out.
+function fetchNonce() {
+  return fetch(BASE + "/nonce", { method: "POST", cache: "no-store" })
     .then((res) => (res.ok ? res.json() : Promise.reject()))
     .then((json) => {
-      if (typeof json.resetNonce === "string") sharedNonce = json.resetNonce;
-      return json;
-    });
+      if (typeof json.nonce === "string") sharedNonce = json.nonce;
+      return sharedNonce;
+    })
+    .catch(() => sharedNonce);
 }
 
 function fetchDaily() {
@@ -123,7 +130,7 @@ const TIER_ALPHA = [0, 28, 52, 78, 100]; // background color-mix %, index = tier
 const RAIL_ATTR = "data-sidebar-collapsed";
 const PANEL_MIN_W = 268;
 
-const STYLE_ID = "dsh-usage-bar-style";
+const STYLE_ID = "dsh-usage-bar/style.css";
 
 function railOf(el) {
   return !!(el && el.closest && el.closest("[" + RAIL_ATTR + "]"));
@@ -236,13 +243,19 @@ function UsagePill() {
     const ro = new ResizeObserver(compute);
     if (panelRef.current) ro.observe(panelRef.current);
     window.addEventListener("resize", compute);
+    // The panel is position:fixed, so it does not follow the pill on its own:
+    // any scroll in an ancestor (the sidebar list, the page) would leave it
+    // anchored to where the pill used to be. Capture phase catches scrolls
+    // inside nested scroll containers, which do not bubble.
+    window.addEventListener("scroll", compute, true);
     return () => {
       ro.disconnect();
       window.removeEventListener("resize", compute);
+      window.removeEventListener("scroll", compute, true);
     };
   }, [open, rail]);
 
-  const pageData = useMemo(() => buildPage(page), [page, open]);
+  const pageData = useMemo(() => buildPage(page), [page]);
   const maxDay = useMemo(() => {
     let max = 0;
     if (daily) for (const arr of Object.values(daily)) max = Math.max(max, dayTotal(arr));
@@ -262,7 +275,7 @@ function UsagePill() {
   const tierBg = (tier) =>
     tier === 0
       ? "var(--dsw-alias-interactive-bg-hover)"
-      : "color-mix(in srgb, var(--dsw-alias-text-accent, #4c9aff) " + TIER_ALPHA[tier] + "%, var(--dsw-alias-interactive-bg-hover))";
+      : "color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) " + TIER_ALPHA[tier] + "%, var(--dsw-alias-interactive-bg-hover))";
 
   const handleReset = async (e) => {
     e.stopPropagation();
@@ -271,8 +284,12 @@ function UsagePill() {
     resettingRef.current = true;
     setResetting(true);
     try {
-      const nonce = sharedNonce ?? "";
-      const res = await fetch(BASE + "/reset?n=" + encodeURIComponent(nonce), { cache: "no-store" });
+      const nonce = sharedNonce ?? (await fetchNonce());
+      const res = await fetch(BASE + "/reset", {
+        method: "POST",
+        cache: "no-store",
+        headers: nonce ? { "x-dsh-usage-bar-nonce": nonce } : {},
+      });
       if (!res.ok) throw new Error("reset failed");
       const json = await fetchSummary();
       setData(json);
@@ -318,17 +335,18 @@ function UsagePill() {
   const selHit = selBuckets ? cacheHitPercent(selBuckets) : null;
   const selTotal = sel ? dayTotal(sel) : 0;
 
-  if (!data || !data.totals) return null;
+  const current = data && data.current && data.current.totals ? data.current : null;
+  if (!current) return null;
 
-  // All-time view data (server-provided sum of every daily bucket).
+  // All-time view data (server-provided sum of every session's ledger entry).
   const allTime = data.allTime && data.allTime.totals ? data.allTime : null;
   const allTimeHit = allTime ? cacheHitPercent(allTime.totals) : null;
   const title =
     "本次统计：" +
-    "未缓存输入 " + formatTokens(data.totals.uncachedInputTokens) +
-    " · 缓存读 " + formatTokens(data.totals.cacheReadTokens) +
-    " · 缓存写 " + formatTokens(data.totals.cacheWriteTokens) +
-    " · 输出 " + formatTokens(data.totals.outputTokens);
+    "未缓存输入 " + formatTokens(current.totals.uncachedInputTokens) +
+    " · 缓存读 " + formatTokens(current.totals.cacheReadTokens) +
+    " · 缓存写 " + formatTokens(current.totals.cacheWriteTokens) +
+    " · 输出 " + formatTokens(current.totals.outputTokens);
 
   const cellEls = [];
   for (let i = 0; i < pageData.leading; i++) cellEls.push(createElement("span", { key: "lead" + i, className: "dsh-usage-panel__blank" }));
@@ -375,22 +393,22 @@ function UsagePill() {
         "aria-expanded": open ? "true" : "false",
       },
       rail
-        ? createElement("span", { className: "dsh-usage-bar__sym" }, formatTokensShort(data.totalTokens ?? 0))
+        ? createElement("span", { className: "dsh-usage-bar__sym" }, formatTokensShort(current.totalTokens ?? 0))
         : [
             createElement(
               "span",
               { key: "v", className: "dsh-usage-bar__item" },
               createElement("span", null, "Σ"),
-              createElement("span", { className: "dsh-usage-bar__value" }, formatTokens(data.totalTokens ?? 0)),
+              createElement("span", { className: "dsh-usage-bar__value" }, formatTokens(current.totalTokens ?? 0)),
               createElement("span", null, "tokens"),
             ),
             createElement("span", { key: "sp", className: "dsh-usage-bar__spacer" }),
-            data.billedInputTokens + data.totals.outputTokens > 0
+            current.billedInputTokens + current.totals.outputTokens > 0
               ? createElement(
                   "span",
                   { key: "hit", className: "dsh-usage-bar__item" },
                   createElement("span", null, "缓存命中"),
-                  createElement("span", { className: "dsh-usage-bar__hit" }, (cacheHitPercent(data.totals) ?? 0).toFixed(1) + "%"),
+                  createElement("span", { className: "dsh-usage-bar__hit" }, (cacheHitPercent(current.totals) ?? 0).toFixed(1) + "%"),
                 )
               : null,
             createElement(
@@ -583,7 +601,7 @@ function UsagePill() {
                       createElement(
                         "div",
                         { className: "dsh-usage-panel__alltime" },
-                        "覆盖 " + (daily ? Object.keys(daily).length : 0) + " 天 · 历史会话 " + (data.backfilledSessions ?? 0) + " 个 · 不受清零影响",
+                        "覆盖 " + (daily ? Object.keys(daily).length : 0) + " 天 · 已统计会话 " + (data.backfilledSessions ?? 0) + " 个 · 不受清零影响",
                       ),
                     )
                   : createElement("div", { className: "dsh-usage-panel__detail-title" }, "加载中…"),
@@ -611,14 +629,18 @@ const inject = ["slots", "locale"];
 function apply(ctx) {
   if (typeof document === "undefined") return;
   ctx.effect(() => {
-    if (document.getElementById(STYLE_ID) === null) {
+    // Tag the stylesheet the way the client module system expects
+    // (data-plugin-css), so it is attributed to this plugin rather than being
+    // claimed by whichever plugin happens to materialize next.
+    const selector = "style[data-plugin-css=" + JSON.stringify(STYLE_ID) + "]";
+    if (typeof document !== "undefined" && document.querySelector(selector) === null) {
       const tag = document.createElement("style");
-      tag.id = STYLE_ID;
+      tag.dataset.pluginCss = STYLE_ID;
       tag.textContent = CSS;
       document.head.appendChild(tag);
     }
     return () => {
-      const existing = document.getElementById(STYLE_ID);
+      const existing = document.querySelector(selector);
       if (existing) existing.remove();
     };
   }, "dsh-usage-bar: stylesheet");
@@ -655,14 +677,14 @@ const CSS =
   ".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:none}" +
   ".dsh-usage-bar .dsh-usage-bar__spacer{flex:1;min-width:4px}" +
   ".dsh-usage-bar .dsh-usage-bar__value{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}" +
-  ".dsh-usage-bar .dsh-usage-bar__hit{color:var(--dsw-alias-text-accent,#4c9aff);font-variant-numeric:tabular-nums}" +
+  ".dsh-usage-bar .dsh-usage-bar__hit{color:var(--dsw-alias-brand-primary,#4d6bfe);font-variant-numeric:tabular-nums}" +
   ".dsh-usage-bar__reset{cursor:pointer;flex:none;display:inline-flex;align-items:center;justify-content:center;" +
   "height:18px;min-width:18px;padding:0 5px;border:none;border-radius:8px;background:0 0;" +
   "color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:11px;line-height:1;transition:background .12s ease}" +
   ".dsh-usage-bar__reset:hover{background:rgba(128,128,140,.25);color:var(--dsw-alias-label-primary)}" +
   ".dsh-usage-bar__reset:disabled{opacity:.5;cursor:default}" +
-  ".dsh-usage-panel{z-index:60;box-sizing:border-box;padding:10px 12px;border-radius:14px;background:var(--dsw-hovercard-bg,var(--dsw-alias-bg-layer-2,#2C2C2E));" +
-  "box-shadow:var(--dsw-shadow-lv3,var(--dsw-elevation-prominent));color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5}" +
+  ".dsh-usage-panel{z-index:60;box-sizing:border-box;padding:10px 12px;border-radius:14px;background:var(--dsw-alias-bg-layer-2,#2C2C2E);" +
+  "box-shadow:var(--dsw-elevation-prominent,var(--dsw-shadow-lv3));color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5}" +
   ".dsh-usage-panel__tabs{display:flex;gap:4px;margin-bottom:8px;background:rgba(128,128,140,.12);border-radius:9px;padding:2px}" +
   ".dsh-usage-panel__tab{flex:1;cursor:pointer;height:24px;border:none;border-radius:7px;background:0 0;" +
   "color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:12px;line-height:1}" +
@@ -694,7 +716,7 @@ const CSS =
   ".dsh-usage-panel__cell:hover{outline:1px solid var(--dsw-alias-label-secondary)}" +
   ".dsh-usage-panel__cell--sel{outline:1.5px solid var(--dsw-alias-label-primary)}" +
   ".dsh-usage-panel__cell--future{opacity:.25;cursor:default}" +
-  ".dsh-usage-panel__cell--today{box-shadow:inset 0 0 0 1px var(--dsw-alias-text-accent,#4c9aff)}" +
+  ".dsh-usage-panel__cell--today{box-shadow:inset 0 0 0 1px var(--dsw-alias-brand-primary,#4d6bfe)}" +
   ".dsh-usage-panel__legend{display:flex;align-items:center;gap:4px;margin-top:8px;color:var(--dsw-alias-label-secondary);font-size:11px}" +
   ".dsh-usage-panel__swatch{width:10px;height:10px;border-radius:2.5px;display:inline-block}" +
   ".dsh-usage-panel__hint{margin-left:auto;color:var(--dsw-alias-label-tertiary)}" +

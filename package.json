@@ -1,6 +1,6 @@
 {
   "name": "dsh-usage-bar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH web plugin: total token consumption and cache-hit rate pinned above the sidebar Settings row.",
   "type": "module",
   "main": "lib/index.js",
@@ -11,7 +11,6 @@
   ],
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
     "./client": "./lib/client.js",
@@ -22,10 +21,6 @@
       "patch": "./cordis.patch.yml"
     },
     "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-slots"
-      ],
       "platform": "web"
     }
   },
@@ -34,6 +29,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2"
   },
   "license": "MIT"
 }

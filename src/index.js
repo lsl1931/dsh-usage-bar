@@ -1,27 +1,34 @@
 // dsh-usage-bar Node half: aggregate provider-reported token usage across all
-// sessions (grand totals + per-local-day buckets) and expose JSON routes for
-// the client pill and heatmap.
+// sessions and expose JSON routes for the client pill and heatmap.
 //
 // Usage accounting follows the official @deepseek-ai/dsh-token-meter
-// `tokenUsage` projection fold exactly:
-// - `assistant/chunk` (chunk.type === "usage") provides an early sample;
-// - `assistant/message` (data.usage) provides the final sample of the same
+// \`tokenUsage\` projection fold exactly:
+// - \`assistant/chunk\` (chunk.type === "usage") provides an early sample;
+// - \`assistant/message\` (data.usage) provides the final sample of the same
 //   attempt and REPLACES the earlier sample instead of double counting;
-// - `llm/retry-started` closes the replacement slot so the retried attempt
+// - \`llm/retry-started\` closes the replacement slot so the retried attempt
 //   adds to the total.
-// The replacement is applied both to grand totals and to the per-day buckets
-// (a same-attempt replacement subtracts the sample's previous day first, so a
-// midnight crossing attributes the correction to the right day).
-// History backfill decodes the shipped session.jsonl.zstd artifacts
-// (concatenated checksummed zstd frames) with node:zlib — zero extra deps.
-import { homedir } from "node:os";
+//
+// The accounting MODEL is "recompute per session, then derive", not "accumulate":
+// every session owns one ledger entry that is a pure function of its event log,
+// and every displayed number is a sum over those entries. Re-observing a session
+// therefore cannot change any number, which is what makes live capture and
+// history backfill idempotent under each other and across restarts.
+//
+// Session discovery is delegated to the harness: ${ctx.sessionPersistence} owns
+// home resolution, the project-directory layout, current-generation selection
+// (session.v{N}.jsonl.zstd, highest N), and v2->v3 migration. The plugin does no
+// filesystem path construction of its own.
+import { readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
-import { readdirSync, readFileSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { homedir } from "node:os";
 import { zstdDecompressSync } from "node:zlib";
 
 const ZERO = { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
 
-// The usage a chunk or finalized message reports for its step, if any.
+// --- pure fold: the official replacement semantics ---
+
+/** The usage a chunk or finalized message reports for its step, if any. */
 function usageOf(event) {
   if (event.type === "assistant/chunk" && event.data?.chunk?.type === "usage") return event.data.chunk.usage;
   if (event.type === "assistant/message" && event.data?.usage !== undefined) return event.data.usage;
@@ -48,6 +55,15 @@ function addBuckets(target, buckets, sign = 1) {
   target.cacheWriteTokens += sign * buckets.cacheWriteTokens;
 }
 
+function subtractBuckets(a, b) {
+  return {
+    uncachedInputTokens: a.uncachedInputTokens - b.uncachedInputTokens,
+    outputTokens: a.outputTokens - b.outputTokens,
+    cacheReadTokens: a.cacheReadTokens - b.cacheReadTokens,
+    cacheWriteTokens: a.cacheWriteTokens - b.cacheWriteTokens,
+  };
+}
+
 /** Local-calendar YYYY-MM-DD for an epoch-ms timestamp. */
 export function dayKeyOf(ms) {
   const d = new Date(ms);
@@ -55,17 +71,21 @@ export function dayKeyOf(ms) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+  return y + "-" + m + "-" + day;
+}
+
+function eventTimeMs(event) {
+  const t = event?.time;
+  return typeof t === "number" ? t : typeof t === "string" ? Date.parse(t) : Date.now();
 }
 
 function eventDayKey(event) {
-  const t = event?.time;
-  const ms = typeof t === "number" ? t : typeof t === "string" ? Date.parse(t) : Date.now();
+  const ms = eventTimeMs(event);
   return dayKeyOf(ms) ?? dayKeyOf(Date.now());
 }
 
 // --- one shared fold over usage events: totals + per-day buckets ---
-// `last` mirrors the official projection's single replacement slot:
+// last mirrors the official projection's single replacement slot:
 // { turn, step, buckets, day } or null.
 
 function foldApply(state, event) {
@@ -85,7 +105,7 @@ function foldApply(state, event) {
   const dayEntry = state.daily[day] ?? (state.daily[day] = { ...ZERO });
   addBuckets(dayEntry, buckets, 1);
   if (previous) {
-    // same attempt resample: replace — subtract the earlier sample from its day
+    // same attempt resample: replace -- subtract the earlier sample from its day
     addBuckets(state.totals, previous.buckets, -1);
     const prevDay = state.daily[previous.day];
     if (prevDay) addBuckets(prevDay, previous.buckets, -1);
@@ -93,21 +113,27 @@ function foldApply(state, event) {
   state.last = { turn, step, buckets, day };
 }
 
-/** Pure fold over an ordered event iterable → { totals, daily }. */
-export function foldUsage(events) {
+/** Full fold state (totals + daily + the open replacement slot). Internal. */
+function foldState(events) {
   const state = { totals: { ...ZERO }, daily: {}, last: null };
   for (const event of events) foldApply(state, event);
+  return state;
+}
+
+/** Pure fold over an ordered event iterable -> { totals, daily }. */
+export function foldUsage(events) {
+  const state = foldState(events);
   return { totals: state.totals, daily: state.daily };
 }
 
-/** All-time view: sum every per-day bucket set (survives 清零, unlike totals). */
+/** All-time view: sum every per-day bucket set. */
 export function sumDaily(daily) {
   const totals = { ...ZERO };
   for (const b of Object.values(daily ?? {})) addBuckets(totals, b, 1);
   return totals;
 }
 
-// --- zstd multi-frame scanning (same container shape the persistence backend writes) ---
+// --- zstd multi-frame scanning (retained for offline log decoding) ---
 
 function* zstdFrames(buf) {
   const magic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
@@ -146,163 +172,283 @@ export function decodeSessionLog(buf) {
   return events;
 }
 
-const PLUGIN_DIR = join(homedir(), ".dsh", "storages", "dsh-usage-bar");
+// --- store: one ledger entry per session ---
+//
+// Shape (version 3):
+//   {
+//     version: 3,
+//     resetAt: number,                     // epoch-ms of the last reset, 0 = never
+//     sessions: { [id]: { totals, daily, floor } },
+//   }
+//
+// totals/daily are the session's full folded usage; floor is the part of it that
+// predates resetAt. "current" is the sum of (totals - floor) -- exactly the usage
+// produced since the last reset, including the post-reset part of a resumed
+// session. "allTime" and the calendar sum the full values.
+
+const STORE_VERSION = 3;
+
+/**
+ * Resolve the harness home the way @deepseek-ai/dsh-home-paths documents it:
+ * an explicit configured path (unavailable to a plugin) > $DSH_HOME > ~/.dsh.
+ * An empty or whitespace-only $DSH_HOME counts as unset, so a blank override
+ * never resolves the home to the current directory.
+ * @returns the absolute harness home.
+ */
+export function resolveHarnessHome(env = process.env) {
+  const override = env.DSH_HOME;
+  if (typeof override === "string" && override.trim().length > 0) return override;
+  return join(homedir(), ".dsh");
+}
+
+// The store lives under the harness home's `storages` tree — the same root the
+// official storage backend is configured with (dshHomePath('storages')).
+const PLUGIN_DIR = join(resolveHarnessHome(), "storages", "dsh-usage-bar");
 const STORE_PATH = join(PLUGIN_DIR, "usage.json");
 
+export const emptyStore = () => ({ version: STORE_VERSION, resetAt: 0, sessions: {} });
+
+const cloneBuckets = (b) => ({ ...ZERO, ...(b ?? {}) });
+
+function cloneDaily(daily) {
+  const out = {};
+  for (const [day, b] of Object.entries(daily ?? {})) out[day] = cloneBuckets(b);
+  return out;
+}
+
 function loadStore() {
+  let raw;
   try {
-    const raw = JSON.parse(readFileSync(STORE_PATH, "utf8"));
-    if (raw && typeof raw === "object" && raw.totals && typeof raw.totals === "object") {
-      const daily = {};
-      if (raw.daily && typeof raw.daily === "object") {
-        for (const [key, value] of Object.entries(raw.daily)) {
-          if (typeof key === "string" && /^\d{4}-\d{2}-\d{2}$/.test(key) && value && typeof value === "object") {
-            daily[key] = { ...ZERO, ...value };
-          }
-        }
-      }
-      return {
-        totals: { ...ZERO, ...raw.totals },
-        daily,
-        backfilled: Array.isArray(raw.backfilled) ? new Set(raw.backfilled) : new Set(),
-        epoch: typeof raw.epoch === "number" ? raw.epoch : 0,
-        dailyDone: raw.dailyDone === true,
+    raw = JSON.parse(readFileSync(STORE_PATH, "utf8"));
+  } catch {
+    return emptyStore(); // first run or corrupt file: start clean
+  }
+  if (!raw || typeof raw !== "object") return emptyStore();
+  const store = emptyStore();
+  if (raw.sessions && typeof raw.sessions === "object") {
+    for (const [id, entry] of Object.entries(raw.sessions)) {
+      if (typeof id !== "string" || !entry || typeof entry !== "object") continue;
+      store.sessions[id] = {
+        totals: cloneBuckets(entry.totals),
+        daily: cloneDaily(entry.daily),
+        floor: cloneBuckets(entry.floor),
       };
     }
-  } catch {
-    // first run or corrupt file: start clean
+    store.resetAt = typeof raw.resetAt === "number" ? raw.resetAt : 0;
+    return store;
   }
-  return { totals: { ...ZERO }, daily: {}, backfilled: new Set(), epoch: 0, dailyDone: false };
+  // v2 store: it held only a running total and a day map, with no per-session
+  // ledger, so its numbers cannot be attributed to sessions. Rebuild from logs
+  // instead -- the logs are the source of truth -- and carry the reset boundary
+  // forward as "everything known so far is historical".
+  store.resetAt = Date.now();
+  return store;
 }
 
 function serializeStore(store) {
   return JSON.stringify(
     {
-      version: 2,
-      totals: store.totals,
-      daily: store.daily,
-      backfilled: [...store.backfilled],
-      epoch: store.epoch,
-      dailyDone: store.dailyDone === true,
+      version: STORE_VERSION,
+      resetAt: store.resetAt,
+      sessions: store.sessions,
     },
     null,
     2,
   );
 }
 
-let saveTimer = null;
-function scheduleSave(store) {
-  if (saveTimer) return;
-  saveTimer = setTimeout(() => {
-    saveTimer = null;
-    try {
-      mkdirSync(PLUGIN_DIR, { recursive: true });
-      writeAtomic(STORE_PATH, serializeStore(store));
-    } catch {
-      // storage write failure is non-fatal; totals stay in memory
-    }
-  }, 2000);
-}
-
 function writeAtomic(path, data) {
-  const tmp = `${path}.${process.pid}.tmp`;
+  const tmp = path + "." + process.pid + ".tmp";
   writeFileSync(tmp, data);
   renameSync(tmp, path);
 }
 
-/** Immediate synchronous persist (used by reset so the cleared total survives restart). */
-function persistNow(store) {
+/**
+ * Persist the ledger. Fail-soft by design: a storage failure must not break the
+ * plugin, and the in-memory ledger stays authoritative. But a SILENT failure
+ * degrades to in-memory-only with no signal at all, so the first failure is
+ * reported through the plugin's logger and subsequent ones are counted.
+ * @param store - the ledger to write.
+ * @param log - optional reporter; omitted in tests that do not exercise logging.
+ * @returns true when the write succeeded.
+ */
+function persist(store, log) {
   try {
     mkdirSync(PLUGIN_DIR, { recursive: true });
     writeAtomic(STORE_PATH, serializeStore(store));
-  } catch {
-    // ignore: in-memory totals remain authoritative for this process
+    return true;
+  } catch (error) {
+    persistFailures += 1;
+    if (persistFailures === 1) {
+      log?.warn?.(
+        "dsh-usage-bar: could not persist the usage ledger to " + STORE_PATH +
+        " (" + String(error) + "); usage is tracked in memory only until a write succeeds",
+      );
+    }
+    return false;
   }
 }
 
-/** Scan the sessions root; fold each session into the store.
- * - Sessions not yet in `backfilled`: fold into grand totals + daily, then mark.
- * - Sessions already marked while `dailyDone` is false: fold into daily ONLY
- *   (one-time migration so the heatmap covers history recorded before the
- *   daily buckets existed, without re-inflating the cleared/known totals).
- * `dailyDone` flips true only after a full uninterrupted pass. */
-export function backfillOnce(store, sessionsRoot) {
-  const epochAtStart = store.epoch;
-  let projects;
-  try {
-    projects = readdirSync(sessionsRoot, { withFileTypes: true }).filter((d) => d.isDirectory());
-  } catch {
-    return 0;
+/** Number of failed persist attempts since load; reported once, then counted. */
+let persistFailures = 0;
+
+// --- derived views ---
+
+function sumOverSessions(store, pick) {
+  const totals = { ...ZERO };
+  for (const entry of Object.values(store.sessions)) addBuckets(totals, pick(entry), 1);
+  return totals;
+}
+
+/** "allTime": every session's full folded usage. */
+export const allTimeTotals = (store) => sumOverSessions(store, (e) => e.totals);
+
+/** Calendar heatmap: every session's per-day buckets, merged. */
+export function allTimeDaily(store) {
+  const daily = {};
+  for (const entry of Object.values(store.sessions)) {
+    for (const [day, b] of Object.entries(entry.daily ?? {})) {
+      const target = daily[day] ?? (daily[day] = { ...ZERO });
+      addBuckets(target, b, 1);
+    }
   }
+  return daily;
+}
+
+/** "current": the usage produced since the last reset. */
+export const currentTotals = (store) => sumOverSessions(store, (e) => subtractBuckets(e.totals, e.floor));
+
+/** The part of one session's usage that predates the last reset. */
+function floorOf(events, resetAt) {
+  if (resetAt === 0) return { ...ZERO };
+  return foldState(events.filter((event) => eventTimeMs(event) <= resetAt)).totals;
+}
+
+// --- backfill ---
+
+/**
+ * Fold sessions into the ledger. \`sessions\` is an async iterable of
+ * { id, events }; the caller owns discovery (sessionPersistence in production,
+ * fixtures in tests). A session already in the ledger is skipped, so a re-run
+ * after an interruption is idempotent, and a session counted live is never
+ * counted again here.
+ * @returns the number of sessions folded.
+ */
+export async function backfillOnce(store, sessions) {
   let added = 0;
-  for (const project of projects) {
-    const projectDir = join(sessionsRoot, project.name);
-    let sessionDirs;
-    try {
-      sessionDirs = readdirSync(projectDir, { withFileTypes: true }).filter((d) => d.isDirectory() && d.name.startsWith("session-"));
-    } catch {
-      continue;
-    }
-    for (const sd of sessionDirs) {
-      // A reset during a slow scan cancels the rest of this backfill: the
-      // cleared grand total must not be re-inflated by the in-flight scan.
-      // dailyDone stays false, so the daily migration re-runs next boot.
-      if (store.epoch !== epochAtStart) return added;
-      const id = sd.name.slice("session-".length);
-      const needTotals = !store.backfilled.has(id);
-      const needDaily = !store.dailyDone;
-      if (!needTotals && !needDaily) continue;
-      let events = null;
-      for (const name of ["session.jsonl.zstd", "session.jsonl"]) {
-        try {
-          const raw = readFileSync(join(projectDir, sd.name, name));
-          events = name.endsWith(".zstd")
-            ? decodeSessionLog(raw)
-            : raw
-                .toString("utf8")
-                .split("\n")
-                .filter((l) => l.trim())
-                .map((l) => JSON.parse(l));
-          break;
-        } catch {
-          // try next artifact name
-        }
-      }
-      if (!events) continue;
-      const { totals, daily } = foldUsage(events);
-      if (needTotals) {
-        addBuckets(store.totals, totals, 1);
-        store.backfilled.add(id);
-      }
-      if (needDaily) {
-        for (const [day, buckets] of Object.entries(daily)) {
-          const entry = store.daily[day] ?? (store.daily[day] = { ...ZERO });
-          addBuckets(entry, buckets, 1);
-        }
-      }
-      added++;
-    }
+  for await (const { id, events } of sessions) {
+    if (typeof id !== "string" || id === "" || store.sessions[id] !== undefined) continue;
+    const folded = foldState(events);
+    store.sessions[id] = {
+      totals: folded.totals,
+      daily: folded.daily,
+      floor: floorOf(events, store.resetAt),
+    };
+    added++;
   }
-  store.dailyDone = true;
   return added;
 }
 
-export const inject = ["webServer"];
+/** Enumerate sessions the ledger does not know yet, through the harness. */
+export async function* persistedSessions(persistence, store) {
+  let snapshots;
+  try {
+    snapshots = await persistence.list();
+  } catch {
+    return; // no readable store: leave history absent rather than guess
+  }
+  for (const snapshot of snapshots) {
+    const id = String(snapshot?.header?.id ?? "");
+    if (id === "" || store.sessions[id] !== undefined) continue;
+    let handle;
+    try {
+      handle = await persistence.open(id, "read");
+      const result = await handle.read();
+      yield { id, events: result.events };
+    } catch {
+      // unreadable or unsupported session: skip, stay best-effort
+    } finally {
+      try {
+        await handle?.close();
+      } catch {
+        // closing a read handle cannot fail in a way we can act on
+      }
+    }
+  }
+}
+
+export const inject = ["webServer", "connection"];
 
 export function apply(ctx) {
-  const log = () => ctx.logger ?? console;
   const store = loadStore();
-  const sessionsRoot = join(homedir(), ".dsh", "sessions");
+  const persistence = ctx.get("sessionPersistence");
 
-  // Per-session live fold state: replays the official replacement semantics so
-  // a streamed usage chunk plus the final message sample count exactly once.
-  const liveFolds = new Map(); // sessionId -> fold state { totals, daily, last }
+  // Per-session live fold, seeded from the session's own log so a RESUMED
+  // session starts from its full history rather than from this boot's events.
+  //
+  // `observedSeq` is the watermark that makes this safe: `session/event` fires
+  // AFTER the event is committed, so the snapshot already contains the event
+  // being delivered. Folding it again would double-count it. The official
+  // projection guards the same way (session-projection's advanceCell advances
+  // only up to the cursor before the session's current seq), so a delivered
+  // event is folded exactly once.
+  const liveFolds = new Map(); // sessionId -> { totals, daily, last, floor, observedSeq }
+
+  const seqOf = (event) => (typeof event?.seq === "number" ? event.seq : -1);
+
+  const liveStateOf = (session) => {
+    const id = String(session.id);
+    let state = liveFolds.get(id);
+    if (state === undefined) {
+      const events = typeof session.snapshotEvents === "function" ? session.snapshotEvents() : [];
+      const folded = foldState(events);
+      state = {
+        totals: folded.totals,
+        daily: folded.daily,
+        last: folded.last,
+        floor: floorOf(events, store.resetAt),
+        observedSeq: events.reduce((max, e) => Math.max(max, seqOf(e)), -1),
+      };
+      liveFolds.set(id, state);
+    }
+    return { id, state };
+  };
+
+  /**
+   * Write one live session's ledger entry from its fold state.
+   *
+   * The ledger entry SHARES the fold state's `daily` map by reference rather than
+   * cloning it. Both objects are owned by this plugin and mutated only by
+   * `foldApply`, so sharing is safe, and it keeps this off the O(days) path:
+   * this runs once per usage event, and a deep clone of the day map made the
+   * per-event cost grow with the session's day count (measured 5.8us at 2 days
+   * vs 29.7us at 365 days). `totals` and `floor` are 4-field objects, so
+   * copying those is free.
+   */
+  const flushSession = (id, state) => {
+    store.sessions[id] = { totals: { ...state.totals }, daily: state.daily, floor: { ...state.floor } };
+  };
+
+  let saveTimer = null;
+  let backfillTimer = null;
+
+  const scheduleSave = () => {
+    if (saveTimer !== null) return;
+    saveTimer = setTimeout(() => {
+      saveTimer = null;
+      persist(store, ctx.logger);
+    }, 2000);
+  };
+
+  // Every timer this plugin owns is cleared with its fiber.
   ctx.effect(
-    () =>
-      ctx.on("session/disposed", (session) => {
-        liveFolds.delete(String(session?.id ?? ""));
-      }),
-    "dsh-usage-bar: live fold GC",
+    () => () => {
+      if (saveTimer !== null) clearTimeout(saveTimer);
+      saveTimer = null;
+      if (backfillTimer !== null) clearTimeout(backfillTimer);
+      backfillTimer = null;
+    },
+    "dsh-usage-bar: timers",
   );
 
   ctx.effect(
@@ -310,92 +456,87 @@ export function apply(ctx) {
       ctx.on("session/event", (session, event) => {
         try {
           if (usageOf(event) === undefined && event.type !== "llm/retry-started") return;
-          const id = String(session?.id ?? "default");
-          let state = liveFolds.get(id);
-          if (!state) {
-            state = { totals: { ...ZERO }, daily: {}, last: null };
-            liveFolds.set(id, state);
-          }
-          const totalsBefore = { ...state.totals };
-          // deep snapshot: foldApply mutates day entries in place, so the
-          // delta computation must compare against a copy, not a reference
-          const dailyBefore = JSON.parse(JSON.stringify(state.daily));
+          const { id, state } = liveStateOf(session);
+          // Already folded as part of the seeding snapshot: ignore. This is what
+          // keeps a replayed/duplicated delivery from counting twice.
+          const seq = seqOf(event);
+          if (seq !== -1 && seq <= state.observedSeq) return;
           foldApply(state, event);
-          // Fold the per-session delta into the store: totals directly, daily
-          // by comparing every touched day against its snapshot before the fold.
-          const totalsDelta = {
-            uncachedInputTokens: state.totals.uncachedInputTokens - totalsBefore.uncachedInputTokens,
-            outputTokens: state.totals.outputTokens - totalsBefore.outputTokens,
-            cacheReadTokens: state.totals.cacheReadTokens - totalsBefore.cacheReadTokens,
-            cacheWriteTokens: state.totals.cacheWriteTokens - totalsBefore.cacheWriteTokens,
-          };
-          addBuckets(store.totals, totalsDelta, 1);
-          const touchedDays = new Set();
-          if (state.last) touchedDays.add(state.last.day);
-          for (const day of Object.keys(dailyBefore)) touchedDays.add(day);
-          for (const day of Object.keys(state.daily)) touchedDays.add(day);
-          for (const day of touchedDays) {
-            if (!day) continue;
-            const after = state.daily[day] ?? { ...ZERO };
-            const before = dailyBefore[day] ?? { ...ZERO };
-            const delta = {
-              uncachedInputTokens: after.uncachedInputTokens - before.uncachedInputTokens,
-              outputTokens: after.outputTokens - before.outputTokens,
-              cacheReadTokens: after.cacheReadTokens - before.cacheReadTokens,
-              cacheWriteTokens: after.cacheWriteTokens - before.cacheWriteTokens,
-            };
-            if (
-              delta.uncachedInputTokens === 0 &&
-              delta.outputTokens === 0 &&
-              delta.cacheReadTokens === 0 &&
-              delta.cacheWriteTokens === 0
-            )
-              continue;
-            const entry = store.daily[day] ?? (store.daily[day] = { ...ZERO });
-            addBuckets(entry, delta, 1);
-          }
-          scheduleSave(store);
+          if (seq !== -1) state.observedSeq = seq;
+          flushSession(id, state);
+          scheduleSave();
         } catch (error) {
-          log().warn?.(`dsh-usage-bar: session/event fold failed: ${String(error)}`);
+          ctx.logger?.warn?.("dsh-usage-bar: session/event fold failed: " + String(error));
         }
       }),
     "dsh-usage-bar: session/event capture",
   );
 
-  // One JSON route for the client pill. Registered under a custom (non-/api)
-  // path so it bypasses the dsh /api authentication gateway; GET only.
-  const resetNonce = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  // A session that ends is the natural durable point: its log is complete.
+  ctx.effect(
+    () =>
+      ctx.on("session/disposed", (session) => {
+        try {
+          const id = String(session?.id ?? "");
+          const state = liveFolds.get(id);
+          if (state !== undefined) flushSession(id, state);
+          liveFolds.delete(id);
+          persist(store, ctx.logger);
+        } catch (error) {
+          ctx.logger?.warn?.("dsh-usage-bar: dispose flush failed: " + String(error));
+        }
+      }),
+    "dsh-usage-bar: dispose flush",
+  );
+
+  // Per-launch reset secret, issued only behind the trust fence.
+  const resetNonce = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+
+  /** Answer an untrusted/unauthenticated request; true when it was rejected. */
+  const rejected = (req, res) => {
+    const rejection = ctx.connection.requestRejection(req);
+    if (rejection === undefined) return false;
+    res.writeHead(rejection);
+    res.end();
+    return true;
+  };
+
+  const sendJson = (res, status, body) => {
+    res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    res.end(JSON.stringify(body));
+  };
+
+  const methodNotAllowed = (res, allowed) => {
+    res.writeHead(405, { allow: allowed, "content-type": "application/json; charset=utf-8" });
+    res.end(JSON.stringify({ ok: false, error: "method_not_allowed" }));
+  };
+
+  const view = (totals) => ({
+    totals,
+    billedInputTokens: totals.uncachedInputTokens + totals.cacheReadTokens + totals.cacheWriteTokens,
+    totalTokens:
+      totals.uncachedInputTokens + totals.outputTokens + totals.cacheReadTokens + totals.cacheWriteTokens,
+  });
+
+  // One JSON route for the client pill. kind: "exact" is explicit: the webserver
+  // routes anything else into the longest-prefix table.
   ctx.effect(
     () =>
       ctx.webServer.register({
+        kind: "exact",
         path: "/dsh-usage-bar/summary",
         async handler(req, res) {
-          const allTimeTotals = sumDaily(store.daily);
-          res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-          res.end(
-            JSON.stringify({
-              resetNonce,
-              totals: store.totals,
-              billedInputTokens:
-                store.totals.uncachedInputTokens + store.totals.cacheReadTokens + store.totals.cacheWriteTokens,
-              totalTokens:
-                store.totals.uncachedInputTokens +
-                store.totals.outputTokens +
-                store.totals.cacheReadTokens +
-                store.totals.cacheWriteTokens,
-              allTime: {
-                totals: allTimeTotals,
-                billedInputTokens:
-                  allTimeTotals.uncachedInputTokens + allTimeTotals.cacheReadTokens + allTimeTotals.cacheWriteTokens,
-                totalTokens:
-                  allTimeTotals.uncachedInputTokens +
-                  allTimeTotals.outputTokens +
-                  allTimeTotals.cacheReadTokens +
-                  allTimeTotals.cacheWriteTokens,
-              },
-              backfilledSessions: store.backfilled.size,
-            }),
-          );
+          if (rejected(req, res)) return;
+          if (req.method !== "GET") {
+            methodNotAllowed(res, "GET");
+            return;
+          }
+          sendJson(res, 200, {
+            current: view(currentTotals(store)),
+            allTime: view(allTimeTotals(store)),
+            backfilledSessions: Object.keys(store.sessions).length,
+            resetAt: store.resetAt,
+          });
         },
       }),
     "dsh-usage-bar: summary route",
@@ -405,57 +546,88 @@ export function apply(ctx) {
   ctx.effect(
     () =>
       ctx.webServer.register({
+        kind: "exact",
         path: "/dsh-usage-bar/daily",
         async handler(req, res) {
+          if (rejected(req, res)) return;
+          if (req.method !== "GET") {
+            methodNotAllowed(res, "GET");
+            return;
+          }
           const daily = {};
-          for (const [day, b] of Object.entries(store.daily)) {
+          for (const [day, b] of Object.entries(allTimeDaily(store))) {
             daily[day] = [b.uncachedInputTokens, b.outputTokens, b.cacheReadTokens, b.cacheWriteTokens];
           }
-          res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-          res.end(JSON.stringify({ daily }));
+          sendJson(res, 200, { daily });
         },
       }),
     "dsh-usage-bar: daily route",
   );
 
-  // Reset route: zero ONLY the grand total the pill shows. Daily heatmap
-  // history is deliberately preserved, and the backfilled marker set stays so
-  // a later restart does not replay history into the fresh total.
+  // Reset secret, issued behind the fence so an unauthenticated caller cannot
+  // obtain it from the summary endpoint.
   ctx.effect(
     () =>
       ctx.webServer.register({
+        kind: "exact",
+        path: "/dsh-usage-bar/nonce",
+        async handler(req, res) {
+          if (rejected(req, res)) return;
+          if (req.method !== "POST") {
+            methodNotAllowed(res, "POST");
+            return;
+          }
+          sendJson(res, 200, { nonce: resetNonce });
+        },
+      }),
+    "dsh-usage-bar: nonce route",
+  );
+
+  // Reset route: start a new "current" period. Each session's floor is set to
+  // its current totals, so the period total reads zero immediately and only
+  // usage produced afterwards counts -- across restarts, because the boundary
+  // is persisted rather than a counter.
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: "exact",
         path: "/dsh-usage-bar/reset",
         async handler(req, res) {
-          if (req.url?.includes(`n=${resetNonce}`) !== true) {
-            res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
-            res.end(JSON.stringify({ ok: false, error: "bad_nonce" }));
+          if (rejected(req, res)) return;
+          if (req.method !== "POST") {
+            methodNotAllowed(res, "POST");
+            return;
+          }
+          if (req.headers["x-dsh-usage-bar-nonce"] !== resetNonce) {
+            sendJson(res, 403, { ok: false, error: "bad_nonce" });
             return;
           }
           try {
-            store.totals = { ...ZERO };
-            store.epoch += 1;
-            liveFolds.clear();
-            persistNow(store);
-            res.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-            res.end(JSON.stringify({ ok: true }));
+            store.resetAt = Date.now();
+            for (const entry of Object.values(store.sessions)) entry.floor = { ...entry.totals };
+            for (const state of liveFolds.values()) state.floor = { ...state.totals };
+            persist(store, ctx.logger);
+            sendJson(res, 200, { ok: true });
           } catch (error) {
-            log().warn?.(`dsh-usage-bar: reset failed: ${String(error)}`);
-            res.writeHead(500, { "content-type": "application/json; charset=utf-8" });
-            res.end(JSON.stringify({ ok: false }));
+            ctx.logger?.warn?.("dsh-usage-bar: reset failed: " + String(error));
+            sendJson(res, 500, { ok: false });
           }
         },
       }),
     "dsh-usage-bar: reset route",
   );
 
-  // Async history backfill: never delays startup.
-  setTimeout(() => {
-    try {
-      const wasDailyDone = store.dailyDone;
-      const added = backfillOnce(store, sessionsRoot);
-      if (added > 0 || (!wasDailyDone && store.dailyDone)) scheduleSave(store);
-    } catch (error) {
-      log().warn?.(`dsh-usage-bar: backfill failed: ${String(error)}`);
-    }
+  // Async history backfill: never delays startup, never blocks the event loop
+  // for the whole scan (each session's fold is separated by an await).
+  backfillTimer = setTimeout(() => {
+    backfillTimer = null;
+    if (persistence === undefined) return; // no history source: live-only
+    backfillOnce(store, persistedSessions(persistence, store))
+      .then((added) => {
+        if (added > 0) persist(store, ctx.logger);
+      })
+      .catch((error) => {
+        ctx.logger?.warn?.("dsh-usage-bar: backfill failed: " + String(error));
+      });
   }, 3000);
 }
