@@ -8,6 +8,7 @@
 // (The previous version of this file re-implemented the handler inline and
 // asserted its own copy, so it passed even with the feature removed.)
 import assert from "node:assert";
+import "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
 import { apply, currentTotals, allTimeTotals, emptyStore } from "./lib/index.js";
 
 const ZERO = { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };

@@ -6,6 +6,7 @@
 // session live through session/event, then triggers a backfill pass, and checks
 // the summary endpoint's numbers rather than internal state.
 import assert from "node:assert";
+import "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
 import { apply, decodeSessionLog } from "./lib/index.js";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";

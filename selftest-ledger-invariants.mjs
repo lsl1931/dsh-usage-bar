@@ -6,6 +6,7 @@
 // entry, summing its daily buckets must equal its totals, and the floor must
 // never exceed the totals.
 import assert from "node:assert";
+import "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
 import { apply, sumDaily, allTimeDaily, allTimeTotals } from "./lib/index.js";
 
 const ZERO = { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };

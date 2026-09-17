@@ -1,6 +1,7 @@
 // Verifies the store-write failure path REPORTS instead of failing silently,
 // while still not throwing (the ledger must stay usable in memory).
 import assert from "node:assert";
+import "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
 import { apply } from "./lib/index.js";
 
 const warnings = [];

@@ -1,4 +1,5 @@
 // Verify every claim in usage-bar-contracts.md against the real module.
+import "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
 import * as m from "./lib/index.js";
 import { readFileSync } from "node:fs";
 
