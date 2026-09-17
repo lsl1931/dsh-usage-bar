@@ -42,10 +42,18 @@ const makeEl = () => ({
 });
 let CURRENT_COLLAPSED = false;
 let observerCallback = null;
+// The stylesheet is attributed with the official data-plugin-css tag, so the
+// stub models querySelector over that attribute and records the tag it sees.
+let injectedStyleTag = null;
 const documentStub = {
   documentElement: {},
   getElementById: () => null,
-  createElement: () => ({ style: {}, set textContent(v) { this._t = v; }, get textContent() { return this._t; } }),
+  querySelector: (sel) => (sel.includes("data-plugin-css") ? injectedStyleTag : null),
+  createElement: () => {
+    const el = { dataset: {}, style: {}, set textContent(v) { this._t = v; }, get textContent() { return this._t; } };
+    injectedStyleTag = el;
+    return el;
+  },
   head: { appendChild() {} },
   addEventListener() {},
   removeEventListener() {},
@@ -86,12 +94,18 @@ const ctx = {
 mod.apply(ctx);
 assert.ok(Comp, "registered into sidebar.footer.action");
 
-// The stylesheet is injected through a <style> element; capture its text.
-const styleCapture = { _t: "" };
-documentStub.getElementById = () => null;
-documentStub.createElement = () => ({ style: {}, set textContent(v) { css = v }, get textContent() { return css } });
+// The stylesheet is injected through a <style> element; capture its text and
+// assert it carries the plugin-css attribution the module system expects.
+injectedStyleTag = null;
+documentStub.createElement = () => {
+  const el = { dataset: {}, style: {}, set textContent(v) { css = v }, get textContent() { return css } };
+  injectedStyleTag = el;
+  return el;
+};
 mod.apply(ctx);
 assert.ok(css && css.length > 100, "injects a stylesheet");
+assert.strictEqual(injectedStyleTag.dataset.pluginCss, "dsh-usage-bar/style.css", "style tag is attributed with data-plugin-css");
+assert.ok(!("id" in injectedStyleTag) || injectedStyleTag.id === undefined, "style tag is not keyed by a bare DOM id");
 
 const collectText = (node) => {
   if (node == null || node === false) return "";
@@ -104,10 +118,16 @@ const collectText = (node) => {
 // element; unwrap it and call the inner component (that is where hooks run).
 function renderPill(data, collapsed, open) {
   const summary = {
-    totals: { uncachedInputTokens: 1000, outputTokens: 500, cacheReadTokens: 12000, cacheWriteTokens: 300 },
-    billedInputTokens: 11500,
-    totalTokens: 13800,
-    allTime: { totals: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 }, totalTokens: 0 },
+    current: {
+      totals: { uncachedInputTokens: 1000, outputTokens: 500, cacheReadTokens: 12000, cacheWriteTokens: 300 },
+      billedInputTokens: 11500,
+      totalTokens: 13800,
+    },
+    allTime: {
+      totals: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+      billedInputTokens: 0,
+      totalTokens: 0,
+    },
     backfilledSessions: 0,
   };
   // Hook slot order in the component: 0 data, 1 resetting, 2 open, 3 daily,
@@ -148,4 +168,19 @@ const openText = collectText(renderPill("d", true, true)).replace(/\s+/g, " ").t
 assert.ok(openText.includes("14k"), "rail pill number present while open");
 assert.ok(openText.includes("清零本次统计"), "rail open panel exposes 清零本次统计");
 
-console.log("ALL PASS", JSON.stringify({ expandedText, railText }));
+// AC11: the injected CSS must not reference theme tokens the harness does not
+// declare. The allowlist is the set verified present in dsh-client-ui-theme.
+const DECLARED_TOKENS = [
+  "--dsw-alias-bg-base", "--dsw-alias-bg-layer-1", "--dsw-alias-bg-layer-2",
+  "--dsw-alias-bg-layer-3", "--dsw-alias-bg-overlay", "--dsw-alias-border-l1",
+  "--dsw-alias-border-l2", "--dsw-alias-border-l3", "--dsw-alias-border-l4",
+  "--dsw-alias-brand-primary", "--dsw-alias-interactive-bg-hover",
+  "--dsw-alias-label-primary", "--dsw-alias-label-secondary",
+  "--dsw-alias-label-tertiary", "--dsw-alias-state-error-primary",
+  "--dsw-elevation-prominent", "--dsw-shadow-lv3", "--dsw-font-family",
+];
+const usedTokens = [...new Set(css.match(/--dsw-[a-z0-9-]+/g) ?? [])];
+const undeclared = usedTokens.filter((t) => !DECLARED_TOKENS.includes(t));
+assert.deepStrictEqual(undeclared, [], "injected CSS references only declared theme tokens");
+
+console.log("ALL PASS", JSON.stringify({ expandedText, railText, tokens: usedTokens.length }));
