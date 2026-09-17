@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 1
+- **Total Sessions**: 2
 - **Last Active**: 2026-09-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~45 | Active |
+| `journal-1.md` | ~91 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 2 | 2026-09-17 | usage-bar: idempotent accounting, official contracts, live verification, and push | `713a386`, `960ecfb`, `fe0ee94`, `c8df83f`, `bf032a4` | `main` |
 | 1 | 2026-09-17 | usage-bar: align with official plugin contracts and make accounting idempotent | - | `-` |
 <!-- @@@/auto:session-history -->
 
