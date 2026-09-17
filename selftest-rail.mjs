@@ -174,7 +174,7 @@ const DECLARED_TOKENS = [
   "--dsw-alias-bg-base", "--dsw-alias-bg-layer-1", "--dsw-alias-bg-layer-2",
   "--dsw-alias-bg-layer-3", "--dsw-alias-bg-overlay", "--dsw-alias-border-l1",
   "--dsw-alias-border-l2", "--dsw-alias-border-l3", "--dsw-alias-border-l4",
-  "--dsw-alias-brand-primary", "--dsw-alias-interactive-bg-hover",
+  "--dsw-alias-link", "--dsw-alias-interactive-bg-hover",
   "--dsw-alias-label-primary", "--dsw-alias-label-secondary",
   "--dsw-alias-label-tertiary", "--dsw-alias-state-error-primary",
   "--dsw-elevation-prominent", "--dsw-shadow-lv3", "--dsw-font-family",

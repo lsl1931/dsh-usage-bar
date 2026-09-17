@@ -275,7 +275,7 @@ function UsagePill() {
   const tierBg = (tier) =>
     tier === 0
       ? "var(--dsw-alias-interactive-bg-hover)"
-      : "color-mix(in srgb, var(--dsw-alias-brand-primary, #4d6bfe) " + TIER_ALPHA[tier] + "%, var(--dsw-alias-interactive-bg-hover))";
+      : "color-mix(in srgb, var(--dsw-alias-link, #4c9aff) " + TIER_ALPHA[tier] + "%, var(--dsw-alias-interactive-bg-hover))";
 
   const handleReset = async (e) => {
     e.stopPropagation();
@@ -677,7 +677,7 @@ const CSS =
   ".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:none}" +
   ".dsh-usage-bar .dsh-usage-bar__spacer{flex:1;min-width:4px}" +
   ".dsh-usage-bar .dsh-usage-bar__value{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}" +
-  ".dsh-usage-bar .dsh-usage-bar__hit{color:var(--dsw-alias-brand-primary,#4d6bfe);font-variant-numeric:tabular-nums}" +
+  ".dsh-usage-bar .dsh-usage-bar__hit{color:var(--dsw-alias-link,#4c9aff);font-variant-numeric:tabular-nums}" +
   ".dsh-usage-bar__reset{cursor:pointer;flex:none;display:inline-flex;align-items:center;justify-content:center;" +
   "height:18px;min-width:18px;padding:0 5px;border:none;border-radius:8px;background:0 0;" +
   "color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:11px;line-height:1;transition:background .12s ease}" +
@@ -716,7 +716,7 @@ const CSS =
   ".dsh-usage-panel__cell:hover{outline:1px solid var(--dsw-alias-label-secondary)}" +
   ".dsh-usage-panel__cell--sel{outline:1.5px solid var(--dsw-alias-label-primary)}" +
   ".dsh-usage-panel__cell--future{opacity:.25;cursor:default}" +
-  ".dsh-usage-panel__cell--today{box-shadow:inset 0 0 0 1px var(--dsw-alias-brand-primary,#4d6bfe)}" +
+  ".dsh-usage-panel__cell--today{box-shadow:inset 0 0 0 1px var(--dsw-alias-link,#4c9aff)}" +
   ".dsh-usage-panel__legend{display:flex;align-items:center;gap:4px;margin-top:8px;color:var(--dsw-alias-label-secondary);font-size:11px}" +
   ".dsh-usage-panel__swatch{width:10px;height:10px;border-radius:2.5px;display:inline-block}" +
   ".dsh-usage-panel__hint{margin-left:auto;color:var(--dsw-alias-label-tertiary)}" +

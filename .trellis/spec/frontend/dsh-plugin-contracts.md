@@ -202,8 +202,17 @@ plugin's reload.
 
 Use only tokens declared in `dsh-client-ui-theme`. Two traps hit this project:
 
-- `--dsw-alias-text-accent` **does not exist** (0 declarations repo-wide). The accent
-  token is `--dsw-alias-brand-primary`.
+- `--dsw-alias-text-accent` **does not exist** (0 declarations repo-wide).
+- `--dsw-alias-brand-primary` exists but is **not an accent colour**: it resolves to
+  `--dsw-static-neutral-bluish-1000` (`#0f1115`) in light and
+  `--dsw-static-neutral-bluish-50` (`#f9fafb`) in dark, i.e. it is the
+  *inverse* foreground used on a brand-coloured fill (hence its sibling
+  `--dsw-alias-brand-primary-invert`). Using it as a heatmap base makes every
+  tier render near-white and mutually indistinguishable.
+- The real blue accent is `--dsw-alias-link` (`--dsw-static-deepseek-500` /
+  `--dsw-static-deepseek-400`, `#4176e6` / `#679efe`).
+  `--dsw-alias-button-info-fill` and `--dsw-alias-state-business-primary`
+  hold the same pair if a stronger semantic fits.
 - `--dsw-hovercard-bg` is a *component-local* variable inside
   `dsh-client-ui-primitives/HoverCard.module.css`, not a theme token. Use
   `--dsw-alias-bg-layer-2` with `--dsw-elevation-prominent`.
