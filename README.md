@@ -38,9 +38,21 @@
 
 ## 安装
 
+从 npm 安装（推荐，体积最小、可锁版本）：
+
 ```bash
 dsh plugin --profile web add dsh-usage-bar
 ```
+
+或直接从 GitHub 装（拉的是整个仓库，不锁版本）：
+
+```bash
+dsh plugin --profile web add https://codeload.github.com/lsl1931/dsh-usage-bar/tar.gz/refs/heads/main
+```
+
+> `github:lsl1931/dsh-usage-bar` 这种简写**在本机不可用**：pnpm 会把它解析成
+> `git+ssh://`，而本机没有 SSH 密钥，会以 `Host key verification failed` 失败。
+> 用上面的 codeload HTTPS URL 可以完全绕开 git。
 
 或在本仓库目录开发时，用 `link:` 让改动即时生效：
 
@@ -81,6 +93,14 @@ node selftest-ledger-invariants.mjs # 账本不变量（sum(daily)==totals、会
 node selftest-persist.mjs          # 写盘失败不致命且会上报一次
 node selftest-store-size.mjs       # 账本体积与真实用量成正比
 node selftest-spec-claims.mjs      # 代码规范里的契约与实现一致（可执行规范）
+```
+
+> **写测试时注意**：任何调用 `apply()` 的测试都**必须**在最前面导入
+> `./test-isolation.mjs`。它把 `DSH_HOME` 指向临时目录，否则测试会把假数据写进
+> 你真实的账本（`<DSH_HOME>/storages/dsh-usage-bar/usage.json`）。
+> 这不是假设——开发过程中真的发生过一次。
+
+```bash
 ```
 
 依赖本机会话日志的自检（`selftest.mjs` 的真实日志段、`selftest-migrate.mjs`、`selftest-integration.mjs`）在找不到会话日志时会**跳过**而不是失败，路径取自 `$DSH_HOME`，无硬编码。
