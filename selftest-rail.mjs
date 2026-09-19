@@ -156,6 +156,13 @@ assert.ok(expandedText.includes("缓存命中") && expandedText.includes("清零
 assert.ok(css.includes("[data-sidebar-collapsed] .dsh-usage-bar__root"), "rail CSS keyed off the frame attribute");
 assert.ok(/\[data-sidebar-collapsed\] \.dsh-usage-bar__root\{flex:none;width:36px/.test(css), "rail root is a fixed 36px non-flexing box");
 assert.ok(!css.includes("flex:1 0 100%"), "no stale flex-basis:100% rule that overflows the nowrap row");
+// Narrow-width fit ladder: the pill is its own inline-size container, labels are
+// the degradable parts, and the number/reset atoms stay inflexible — so the reset
+// button can never be the child pushed past the pill's overflow:hidden (the bug
+// where 清零 lost its right half at the sidebar's 264px contract minimum).
+assert.ok(css.includes("container-type:inline-size"), "pill is an inline-size query container");assert.ok(css.includes(".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:0 1 auto;min-width:0}"), "items are shrinkable");
+assert.ok(css.includes("@container (max-width:271px){.dsh-usage-bar .dsh-usage-bar__unit{display:none}}"), "unit word drops below 272px");
+assert.ok(css.includes("@container (max-width:231px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}"), "hit label drops below 232px");
 
 const railText = collectText(renderPill("d", true, false)).replace(/\s+/g, " ").trim();
 assert.strictEqual(railText, "14k", "rail renders the compact total only");

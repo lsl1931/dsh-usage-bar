@@ -229,6 +229,23 @@ verified-declared tokens.
   (`dsh-client-ui-layout/lib/client.js:282`), read via `closest(...)` — not from the
   slot's `wide` prop and not by measuring the pill.
 
+#### Narrow-width fit ladder
+
+The expanded sidebar is clamped to `[264, 420]` px
+(`dsh-client-ui-layout/lib/client.js:38`), and the footer row gives the pill
+`sidebarWidth - 24` px. The pill's full row (Σ + value + "tokens" + 缓存命中 +
+pct + 清零) measures 265–272 px of min-content in the harness font, so at the
+contract minimum the row overflows and `overflow:hidden` clips the **last**
+child — the 清零 button. Fixed by making the pill its own query container
+(`container-type:inline-size` on `.dsh-usage-bar`, never on `__root`: the popover
+panel is a child of `__root`, and per spec layout containment makes the container
+the containing block for fixed descendants — measured in Chrome 153 it does not
+re-anchor them, but do not depend on that. The pill has no positioned
+descendants, so the panel is safe either way) and degrading by priority: drop `tokens` below 272 px, drop
+the 缓存命中 label below 232 px. Numbers and 清零 stay `flex:none` so the button
+can never be the clipped child again. Thresholds are measured natural widths of
+each tier, not guesses — see `selftest-rail.mjs`.
+
 ---
 
 ## Measuring the live path

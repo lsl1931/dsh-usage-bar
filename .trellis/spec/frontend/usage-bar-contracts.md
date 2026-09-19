@@ -177,6 +177,7 @@ store.totals.uncachedInputTokens += delta;
 | Store size | `selftest-store-size.mjs` | < 2 KB per session |
 | Timer ownership | `selftest-timers.mjs` | zero timers live after dispose |
 | Style attribution | `selftest-rail.mjs` | `data-plugin-css` set; only declared tokens |
+| Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/231 px; reset stays `flex:none` |
 | Real-log ingestion | `selftest-migrate.mjs` | second pass adds 0 |
 | End-to-end | `selftest-integration.mjs` | backfill → live replay → reset via real `apply()` |
 
