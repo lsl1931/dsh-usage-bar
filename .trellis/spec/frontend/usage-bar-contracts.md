@@ -176,8 +176,10 @@ store.totals.uncachedInputTokens += delta;
 | Write failure | `selftest-persist.mjs` | no throw; ledger usable; exactly 1 warning |
 | Store size | `selftest-store-size.mjs` | < 2 KB per session |
 | Timer ownership | `selftest-timers.mjs` | zero timers live after dispose |
-| Style attribution | `selftest-rail.mjs` | `data-plugin-css` set; only declared tokens |
-| Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/231 px; reset stays `flex:none`; items are `flex:0 1 auto` so the reset can never be the child that overflows (§7.4) |
+| Style attribution | `selftest-rail.mjs`, `selftest-stylesheet.mjs` | `data-plugin-css` names the stylesheet; `data-plugin` claims ownership; only declared tokens |
+| Style ownership | `selftest-stylesheet.mjs` | re-apply does not duplicate the tag; disposing an older instance keeps the mounted instance's CSS; last dispose removes it |
+| Calendar rollover | `selftest-calendar-rollover.mjs` | window + today marker + selected cell follow the local day across midnight |
+| Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/216 px; reset stays `flex:none`; items are `flex:0 1 auto` so the reset can never be the child that overflows (§7.4) |
 | Real-log ingestion | `selftest-migrate.mjs` | second pass adds 0 |
 | End-to-end | `selftest-integration.mjs` | backfill → live replay → reset via real `apply()` |
 

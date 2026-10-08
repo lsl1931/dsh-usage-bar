@@ -182,21 +182,91 @@ sequence watermark (the official `session-projection` `advanceCell` does the sam
 
 ### Stylesheets
 
-Tag the element so the module system attributes it:
+A plugin-injected `<style>` is owned through the harness's `data-plugin` attribute,
+**not** through `data-plugin-css`. Measured in
+`dsh-client-modules/lib/client.js` (dsh 0.1.x, 884-line build; the line numbers this
+project previously cited, 170-176, do not exist in it):
 
 ```js
-const selector = "style[data-plugin-css=" + JSON.stringify(TAG_ID) + "]";
-if (document.querySelector(selector) === null) {
-  const tag = document.createElement("style");
-  tag.dataset.pluginCss = TAG_ID;
-  tag.textContent = CSS;
-  document.head.appendChild(tag);
+// client.js:492-498 — run at the end of every materialize()
+const claimStyles = (id) => {
+  for (const el of document.querySelectorAll("style:not([data-plugin])")) el.setAttribute("data-plugin", id);
+  const owned = [];  // returned, never read: removal is selector-based
+  for (const el of document.querySelectorAll(`style[data-plugin=${JSON.stringify(id)}]`)) owned.push(el.getAttribute("data-plugin-css") ?? id);
+  return owned;
+};
+
+// client.js:190-197 — on replace (:367), prune (:821), reload (:312), rev change (:796)
+function removeOwnedStyles(id) {
+  for (const el of document.querySelectorAll("style[data-plugin]")) if (el.getAttribute("data-plugin") === id) el.remove();
 }
 ```
 
-An untagged `<style>` is claimed by whichever plugin materializes next
-(`dsh-client-modules/lib/client.js:170-176`), so it can be removed by an unrelated
-plugin's reload.
+So: **a tag with only `data-plugin-css` is invisible to `removeOwnedStyles` but wide
+open to `claimStyles`.** The next plugin to materialize adopts it; when that plugin is
+later replaced, pruned or rebuilt, *our* stylesheet is deleted with it. `materialize`
+is memoized (`client.js:670-674`, `loadCache`), so this plugin's factory never runs
+again and the tag never comes back — the pill and the popover keep rendering with **no
+stylesheet at all** (grey beveled user-agent `<button>`s, no card background, calendar
+cells sized by their own text and wrapped 8-to-a-row) until the page is reloaded. That
+is why the report was "sometimes": it takes another plugin loading or reloading after
+this one. `selftest-stylesheet.mjs` fails on the pre-fix shape and passes on this one.
+
+```js
+function ensureStyleTag() {
+  let tag = document.querySelector(STYLE_SELECTOR);
+  if (tag === null) {
+    tag = document.createElement("style");
+    tag.dataset.pluginCss = TAG_ID;   // findable: what the stylesheet IS
+    document.head.appendChild(tag);
+  }
+  if (tag.dataset.plugin !== PLUGIN_ID) tag.dataset.plugin = PLUGIN_ID; // ownership: whose it is
+  if (tag.textContent !== CSS) tag.textContent = CSS; // a tag outlives a module reload
+  return tag;
+}
+
+let styleOwners = 0;
+function mountStyleTag() {
+  styleOwners += 1;
+  ensureStyleTag();
+  return () => {
+    styleOwners -= 1;
+    if (styleOwners > 0) return; // another instance is still mounted
+    const existing = document.querySelector(STYLE_SELECTOR);
+    if (existing) existing.remove();
+  };
+}
+```
+
+Set `PLUGIN_ID` to the module id this bundle registers in
+`window.__ModuleLoader__.load({ id })` — that is the string `claimStyles` /
+`removeOwnedStyles` compare against. The re-stamp also adopts a tag written by an older
+build (which had no `data-plugin` and has therefore been claimed by somebody else).
+The reference count is a second guard: dispose order between an old and a new fiber is
+not ours to control, and a stale disposer must not strip a mounted instance's CSS.
+`dsh-client-ui-theme` claims the same attribute on its own tag
+(`dsh-client-ui-theme/lib/client.js:1181-1193`, `tag.dataset.plugin = PLUGIN_ID`).
+
+Tags that belong to *other* plugins travel with this lesson too:
+`dsh-session-namer` keys its tag by a bare DOM `id` and `dsh-xiaoba-brand` sets only
+`data-plugin-css`, so both can be claimed and then deleted by an unrelated plugin's
+reload (2026-10-01, unverified against their latest commits).
+
+### Date-dependent derived state
+
+`useMemo` keyed only on user state freezes across a date change: a page left open
+overnight kept yesterday's 30-day calendar window (range label and "today" marker
+included) while the polled detail moved to the new day, so the selected day had no
+cell in the visible grid. Key the memo on the local day string as well — the summary
+poll re-renders every 10 s, so no timer of our own is needed:
+
+```js
+const today = keyOf(new Date());
+const pageData = useMemo(() => buildPage(page), [page, today]);
+```
+
+A mutable `Date.now()`-backed value is a legal memo key because it only changes when
+the day does; anything that changes every render would just defeat the memo.
 
 ### Theme tokens
 
@@ -242,7 +312,8 @@ panel is a child of `__root`, and per spec layout containment makes the containe
 the containing block for fixed descendants — measured in Chrome 153 it does not
 re-anchor them, but do not depend on that. The pill has no positioned
 descendants, so the panel is safe either way) and degrading by priority: drop `tokens` below 272 px, drop
-the 缓存命中 label below 232 px. Numbers and 清零 stay `flex:none` so the button
+the 缓存命中 label below 217 px (below the narrowest reachable content box of
+220 px, so the label survives every width the host can produce). Numbers and 清零 stay `flex:none` so the button
 can never be the clipped child again. Thresholds are measured natural widths of
 each tier, not guesses — see `selftest-rail.mjs`.
 
