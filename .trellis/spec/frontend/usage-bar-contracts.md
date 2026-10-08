@@ -177,7 +177,7 @@ store.totals.uncachedInputTokens += delta;
 | Store size | `selftest-store-size.mjs` | < 2 KB per session |
 | Timer ownership | `selftest-timers.mjs` | zero timers live after dispose |
 | Style attribution | `selftest-rail.mjs` | `data-plugin-css` set; only declared tokens |
-| Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/231 px; reset stays `flex:none` |
+| Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/216 px; reset stays `flex:none`; items are `flex:0 1 auto` so the reset can never be the child that overflows (§7.4) |
 | Real-log ingestion | `selftest-migrate.mjs` | second pass adds 0 |
 | End-to-end | `selftest-integration.mjs` | backfill → live replay → reset via real `apply()` |
 
@@ -236,3 +236,42 @@ const handle = await ctx.get("sessionPersistence").open(id, "read");
 const { events } = await handle.read();                     // decoded events
 await handle.close();
 ```
+
+### 7.4 Pill width budget
+
+The pill's width is not ours to choose; it is what the host leaves over:
+
+| Source | Declaration | Cost |
+|---|---|---|
+| `@deepseek-ai/dsh-client-ui-layout` | `clampWidth(sidebar, 264, 420)` | the sidebar's 264…420 px contract |
+| `@deepseek-ai/dsh-client-ui-sidebar` | `--dsh-sidebar-inline-padding:12px`, `padding:6px 12px` | 24 px |
+| this plugin | `.dsh-usage-bar{padding:6px 10px}` | 20 px |
+
+so the pill's **content box is `sidebarWidth - 44`** — 220 px at the contract
+minimum. Measured in Chrome with the harness's own font stack
+(`-apple-system, "Segoe UI", …, "Microsoft YaHei", …`) at 12 px, the full row
+(Σ total + `tokens` · 缓存命中 nn.n% · 清零) needs **239 px** of content box, and
+**245 px** for the widest strings the formatter can emit (a 7-character total
+such as `999.99M` plus `100.0%`). The word `tokens` therefore cannot survive at
+the minimum and drops out through the container query.
+
+```js
+// WRONG: atoms that cannot give way on both sides of the row, so the last child
+// is what the pill's overflow:hidden eats
+.dsh-usage-bar .dsh-usage-bar__item{flex:none}
+// measured at the 264px minimum: 清零's right edge sat 19px past the pill's
+// padding box - only the left third of 零 was painted
+
+// RIGHT: the two label groups are the only children allowed to shrink (they
+// carry the slack), the number and the hit rate keep their boxes, and the reset
+// action keeps the 32px it needs
+.dsh-usage-bar .dsh-usage-bar__item{flex:0 1 auto;min-width:0}
+.dsh-usage-bar__reset{flex:none}
+```
+
+The pill is itself an inline-size container, so nothing in this ladder can change
+the box the ladder is measured against: the thresholds are stable at every width.
+Verified by sweeping the whole 264…420 contract range at every integer width, in
+both the reported-string and worst-string data sets: with the inflexible-atom
+version 清零 is clipped at 19 widths (264…282); with the ladder above, **0 widths
+clip it** and the reset's right edge lands exactly on the pill's padding box.
