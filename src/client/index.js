@@ -95,8 +95,10 @@ function weekdayOf(key) {
 
 // One calendar page: 30 days ending 30*page days ago, aligned to weekday
 // columns (Sunday first), padded with blanks at both ends.
-function buildPage(page) {
-  const now = new Date();
+// `now` is a parameter so the window is a pure function of (page, day): the
+// caller keys its memo on the day as well, which is what keeps a page that has
+// been open across midnight from showing yesterday's window (see pageData).
+function buildPage(page, now = new Date()) {
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const pageEnd = new Date(end);
   pageEnd.setDate(end.getDate() - 30 * page);
@@ -131,6 +133,7 @@ const RAIL_ATTR = "data-sidebar-collapsed";
 const PANEL_MIN_W = 268;
 
 const STYLE_ID = "dsh-usage-bar/style.css";
+const STYLE_SELECTOR = "style[data-plugin-css=" + JSON.stringify(STYLE_ID) + "]";
 
 function railOf(el) {
   return !!(el && el.closest && el.closest("[" + RAIL_ATTR + "]"));
@@ -255,7 +258,15 @@ function UsagePill() {
     };
   }, [open, rail]);
 
-  const pageData = useMemo(() => buildPage(page), [page]);
+  // The visible window is a function of the local calendar day, so the day is
+  // part of the memo key: `page` alone never changes while the sidebar sits open,
+  // and a page left open overnight kept yesterday's 30-day window - range label
+  // and "today" marker included - while the polled detail had already moved to the
+  // new day, so the selected day had no cell in the visible grid at all. The day
+  // string is recomputed every render and the summary poll re-renders every 10s,
+  // so the window rolls over within one poll of midnight with no timer of its own.
+  const today = keyOf(new Date());
+  const pageData = useMemo(() => buildPage(page), [page, today]);
   const maxDay = useMemo(() => {
     let max = 0;
     if (daily) for (const arr of Object.values(daily)) max = Math.max(max, dayTotal(arr));
@@ -626,24 +637,61 @@ function UsagePill() {
 
 const inject = ["slots", "locale"];
 
+// The stylesheet tag is owned by the PLUGIN, not by one component instance, and
+// ownership has to be claimed in the harness's own attribute - `data-plugin`, not
+// `data-plugin-css`. Measured in @deepseek-ai/dsh-client-modules/lib/client.js:
+//
+//   claimStyles (client.js:492-498), run at the end of every materialize:
+//     document.querySelectorAll("style:not([data-plugin])")
+//       .forEach((el) => el.setAttribute("data-plugin", materializingPluginId));
+//   removeOwnedStyles (client.js:190-197), run on replace/prune/reload:
+//     remove every style[data-plugin] whose data-plugin === that plugin's id.
+//
+// A tag carrying only data-plugin-css is therefore invisible to removeOwnedStyles
+// but wide open to claimStyles: the next plugin to materialize adopts it, and the
+// next time THAT plugin is replaced, pruned or rebuilt, our stylesheet is deleted
+// with it. materialize is memoized (client.js:670-674, loadCache), so this plugin's
+// factory never runs again and the tag never comes back - the pill and the popover
+// render with NO stylesheet at all (grey beveled user-agent buttons, no card
+// background, calendar cells sized by their own text and wrapped 8-to-a-row) until
+// the page is reloaded. That is why it only happens "sometimes": it takes another
+// plugin loading or reloading after this one.
+//
+// So: claim both attributes on every apply, refresh stale content, count the live
+// instances (a second instance can exist while the first fiber is still winding
+// down), and remove the tag only when the last one is disposed.
+function ensureStyleTag() {
+  if (typeof document === "undefined") return null;
+  let tag = document.querySelector(STYLE_SELECTOR);
+  if (tag === null) {
+    tag = document.createElement("style");
+    tag.dataset.pluginCss = STYLE_ID;
+    document.head.appendChild(tag);
+  }
+  // Adopt a tag this plugin created before it started claiming ownership - e.g.
+  // one written by an older build that survived an in-place module upgrade.
+  if (tag.dataset.plugin !== NS) tag.dataset.plugin = NS;
+  // A tag that outlived a module reload can still hold the previous build's CSS.
+  if (tag.textContent !== CSS) tag.textContent = CSS;
+  return tag;
+}
+
+let styleOwners = 0;
+
+function mountStyleTag() {
+  styleOwners += 1;
+  ensureStyleTag();
+  return () => {
+    styleOwners -= 1;
+    if (styleOwners > 0) return;
+    const existing = typeof document === "undefined" ? null : document.querySelector(STYLE_SELECTOR);
+    if (existing) existing.remove();
+  };
+}
+
 function apply(ctx) {
   if (typeof document === "undefined") return;
-  ctx.effect(() => {
-    // Tag the stylesheet the way the client module system expects
-    // (data-plugin-css), so it is attributed to this plugin rather than being
-    // claimed by whichever plugin happens to materialize next.
-    const selector = "style[data-plugin-css=" + JSON.stringify(STYLE_ID) + "]";
-    if (typeof document !== "undefined" && document.querySelector(selector) === null) {
-      const tag = document.createElement("style");
-      tag.dataset.pluginCss = STYLE_ID;
-      tag.textContent = CSS;
-      document.head.appendChild(tag);
-    }
-    return () => {
-      const existing = document.querySelector(selector);
-      if (existing) existing.remove();
-    };
-  }, "dsh-usage-bar: stylesheet");
+  ctx.effect(mountStyleTag, "dsh-usage-bar: stylesheet");
 
   ctx.locale?.register?.(NS, {
     zh: { title: "Token 用量" },
@@ -677,12 +725,17 @@ const CSS =
   ".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:0 1 auto;min-width:0}" +
   ".dsh-usage-bar .dsh-usage-bar__item>span{flex:none}" +
   ".dsh-usage-bar .dsh-usage-bar__unit,.dsh-usage-bar .dsh-usage-bar__hitlabel{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}" +
-  // Width ladder (thresholds = measured natural widths of each tier, with slack):
-  // >=272px -> full row; 232..271 -> drop the redundant unit word; <=231 -> also drop
-  // the hit-rate label. Numbers and 清零 are flex:none, so the button can never be
-  // the thing that overflows the pill's overflow:hidden (the reported bug).
+  // Width ladder (thresholds = measured natural widths of each tier; container
+  // queries resolve against the pill's CONTENT box, i.e. pill width - 20 padding):
+  //   >=272 -> full row;  217..271 -> drop the redundant unit word;  <=216 -> drop
+  //   the hit-rate label too.
+  // The label tier sits below the narrowest reachable content box (sidebar min 264
+  // -> pill 240 -> 220), so 缓存命中 survives at every width the host can produce;
+  // the tier only fires if the slot is ever squeezed further, where the shrinkable
+  // label ellipsizes instead. Numbers and 清零 stay flex:none, so the button can
+  // never again be the child that overflows the pill's overflow:hidden.
   "@container (max-width:271px){.dsh-usage-bar .dsh-usage-bar__unit{display:none}}" +
-  "@container (max-width:231px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}" +
+  "@container (max-width:216px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}" +
   ".dsh-usage-bar .dsh-usage-bar__spacer{flex:1;min-width:4px}" +
   ".dsh-usage-bar .dsh-usage-bar__value{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}" +
   ".dsh-usage-bar .dsh-usage-bar__hit{color:var(--dsw-alias-link,#4c9aff);font-variant-numeric:tabular-nums}" +

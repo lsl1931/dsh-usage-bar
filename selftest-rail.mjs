@@ -162,7 +162,7 @@ assert.ok(!css.includes("flex:1 0 100%"), "no stale flex-basis:100% rule that ov
 // where 清零 lost its right half at the sidebar's 264px contract minimum).
 assert.ok(css.includes("container-type:inline-size"), "pill is an inline-size query container");assert.ok(css.includes(".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:0 1 auto;min-width:0}"), "items are shrinkable");
 assert.ok(css.includes("@container (max-width:271px){.dsh-usage-bar .dsh-usage-bar__unit{display:none}}"), "unit word drops below 272px");
-assert.ok(css.includes("@container (max-width:231px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}"), "hit label drops below 232px");
+assert.ok(css.includes("@container (max-width:216px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}"), "hit label drops below 217px");
 
 const railText = collectText(renderPill("d", true, false)).replace(/\s+/g, " ").trim();
 assert.strictEqual(railText, "14k", "rail renders the compact total only");
