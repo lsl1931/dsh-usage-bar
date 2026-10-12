@@ -176,6 +176,7 @@ store.totals.uncachedInputTokens += delta;
 | Write failure | `selftest-persist.mjs` | no throw; ledger usable; exactly 1 warning |
 | Store size | `selftest-store-size.mjs` | < 2 KB per session |
 | Timer ownership | `selftest-timers.mjs` | zero timers live after dispose |
+| Popover trigger | `selftest-pill-open.mjs` | only the pill's own click/Enter/Space changes `open`; no hover handler is wired; a key pressed inside the nested 清零 button must not toggle |
 | Style attribution | `selftest-rail.mjs`, `selftest-stylesheet.mjs` | `data-plugin-css` names the stylesheet; `data-plugin` claims ownership; only declared tokens |
 | Style ownership | `selftest-stylesheet.mjs` | re-apply does not duplicate the tag; disposing an older instance keeps the mounted instance's CSS; last dispose removes it |
 | Calendar rollover | `selftest-calendar-rollover.mjs` | window + today marker + selected cell follow the local day across midnight |
