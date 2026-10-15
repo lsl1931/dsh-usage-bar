@@ -361,3 +361,53 @@ sharing that is `sum(daily) === totals` per entry
   storage sharing or fold would violate.
 - **Exercise failure paths.** `selftest-persist.mjs` drives a genuinely unwritable
   store and asserts the plugin stays usable and reports once.
+`
+
+## Cross-plugin lessons (2026-10)
+
+Verified while fixing the sibling plugins in this workspace. They belong here because they
+are **harness contracts**, not plugin-specific choices.
+
+### `@deepseek-ai/*` is resolved by the Host, not by Node
+
+A Node half may `@deepseek-ai/...`. Those packages are **not** resolvable by a plain
+`node` process from either the plugin workspace or `/node_modules` in the profile (the
+profile carries only the plugin's own dependencies; the harness resolves framework packages
+itself). Consequences:
+
+- A standalone selftest cannot `import()` the built Node half when it has such an import
+  at top level — it dies before any assertion runs. Mount a resolve hook
+  (`module.register('./selftest/stub-framework.mjs', import.meta.url)`) and stub only that
+  specifier. The stub never enters runtime.
+- "The installed copy can resolve framework imports" is **not** a meaningful standalone
+  check. The real checks are: the running host loaded it (a route answers), plus a
+  byte-compare of the installed copy against the workspace build.
+- Do not justify a real-directory (non-symlink) install with "@deepseek-ai/* resolution".
+  The real reasons are byte-comparability and pnpm's link semantics.
+
+### A route outside `/api` gets no authentication from the harness
+
+`ctx.webServer.register({ kind: "exact", path })` puts the route outside the API gateway,
+so **the handler must fence itself** on every request, GET included:
+
+``
+const rejected = (req, res) => {
+  const rejection = ctx.connection.requestRejection(req)
+  if (rejection === undefined) return false
+  res.writeHead(rejection)
+  res.end()
+  return true
+}
+``
+
+`connection` must be declared in the Node half's `inject`; do not optional-chain it, so a
+missing service fails at startup rather than once per request. Without the fence, any local
+page that can reach the port can issue a simple cross-origin request (no preflight) and
+trigger the route's side effects.
+
+### One source of truth for defaults shared by both halves
+
+A plugin whose browser half is generated cannot `import` the Node half's constants. Have
+the build emit them (`tools/build.mjs` imports the shared module and writes the literal into
+the generated bundle) and assert alignment in the selftest, instead of hand-copying defaults
+into the template — two copies are two things that can drift apart.
