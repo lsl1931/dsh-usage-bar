@@ -93,6 +93,10 @@ node selftest-integration.mjs      # 经真实 apply() 的端到端：回填 →
 node selftest-ledger-invariants.mjs # 账本不变量（sum(daily)==totals、会话互不串味）
 node selftest-persist.mjs          # 写盘失败不致命且会上报一次
 node selftest-store-size.mjs       # 账本体积与真实用量成正比
+node selftest-timers.mjs           # apply() 创建的定时器在 dispose 后全部清空
+node selftest-pill-open.mjs        # 面板只由点击/键盘开合，悬停不展开
+node selftest-stylesheet.mjs       # 样式归属（data-plugin）与选择器约束
+node selftest-calendar-rollover.mjs # 30 天窗口按本地日历日滚动，不缓存昨天
 node selftest-spec-claims.mjs      # 代码规范里的契约与实现一致（可执行规范）
 ```
 
@@ -101,8 +105,7 @@ node selftest-spec-claims.mjs      # 代码规范里的契约与实现一致（�
 > 你真实的账本（`<DSH_HOME>/storages/dsh-usage-bar/usage.json`）。
 > 这不是假设——开发过程中真的发生过一次。
 
-```bash
-```
+以上清单以 `ls selftest*.mjs` 为准（当前 16 个）——新增测试时请同步这里，别再漏掉。
 
 依赖本机会话日志的自检（`selftest.mjs` 的真实日志段、`selftest-migrate.mjs`、`selftest-integration.mjs`）在找不到会话日志时会**跳过**而不是失败，路径取自 `$DSH_HOME`，无硬编码。
 
