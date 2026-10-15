@@ -14,3 +14,20 @@ Thumbs.db
 
 # local scratch
 _*
+
+# Trellis scaffolding: keep the spec (project knowledge), drop the churn.
+# .trellis/spec/ is the executable-spec body referenced by selftest-spec-claims.mjs
+# and .trellis/spec/frontend/index.md, so it stays in the repo; scripts/tasks/
+# workspace/agents are regenerated or per-session and stay local.
+.trellis/*
+!.trellis/spec/
+!.trellis/config.yaml
+!.trellis/workflow.md
+!.trellis/.gitignore
+!.trellis/.version
+
+# agent tooling scaffolding (local only, same policy as dsh-session-namer)
+.agents/
+.dsh/
+.tmp-*
+.diag*
