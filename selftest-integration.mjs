@@ -6,10 +6,9 @@
 // session live through session/event, then triggers a backfill pass, and checks
 // the summary endpoint's numbers rather than internal state.
 import assert from "node:assert";
-import "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
+import { REAL_SESSIONS_DIR } from "./test-isolation.mjs"; // MUST precede lib/index.js: pins DSH_HOME to a temp dir
 import { apply, decodeSessionLog } from "./lib/index.js";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { existsSync, readdirSync } from "node:fs";
 
@@ -25,7 +24,10 @@ function makeRes() {
 }
 
 // --- real session logs as fixtures (skip when absent) ------------------------
-const root = join(process.env.DSH_HOME || join(homedir(), ".dsh"), "sessions");
+// The REAL logs, read-only: test-isolation.mjs has already redirected DSH_HOME
+// to a throwaway directory, so resolving fixtures through DSH_HOME here would
+// always find nothing and the whole integration pass would SKIP.
+const root = REAL_SESSIONS_DIR;
 if (!existsSync(root)) { console.log("SKIPPED (no session logs under " + root + ")"); process.exit(0); }
 
 function logPathOf(dir) {
@@ -42,9 +44,9 @@ const fixtures = [];
 for (const project of readdirSync(root, { withFileTypes: true })) {
   if (!project.isDirectory()) continue;
   for (const entry of readdirSync(join(root, project.name), { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith("session-")) continue;
+    if (!entry.isDirectory()) continue;
     const file = logPathOf(join(root, project.name, entry.name));
-    if (file !== undefined) fixtures.push({ id: entry.name, file });
+    if (file !== undefined) fixtures.push({ dir: entry.name, file });
   }
 }
 if (fixtures.length === 0) { console.log("SKIPPED (no readable session logs)"); process.exit(0); }
@@ -52,15 +54,24 @@ if (fixtures.length === 0) { console.log("SKIPPED (no readable session logs)"); 
 // Use ONE real session so the expected numbers come from the same fold.
 const fixture = fixtures[0];
 const events = decodeSessionLog(readFileSync(fixture.file));
+// The persistence id is the log's own header id, which is NOT guaranteed to be
+// the directory name (v3 stored bare uuids, v4 prefixes session-).
+const fixtureId = events.find((e) => e.type === "session")?.id ?? fixture.dir;
 
 // --- fake ctx ---------------------------------------------------------------
 const routes = new Map();
 let eventHandler = null;
 const timers = [];
 
+// Model a harness that provides persistence AFTER this plugin applies. A
+// one-shot ctx.get() at apply() time would bind undefined and stay live-only
+// forever, so the backfill this test asserts can only come from ctx.inject():
+// revert the late binding and the numbers below collapse to zero.
+let persistenceProvided = false;
 const ctx = {
   logger: { warn() {} },
-  get: (name) => (name === "sessionPersistence" ? persistence : undefined),
+  get: (name) => (name === "sessionPersistence" && persistenceProvided ? persistence : undefined),
+  inject: (deps, callback) => { persistenceProvided = true; callback(ctx); },
   connection: { requestRejection: () => undefined }, // fence allows
   effect: (fn) => { const d = fn(); return () => d && d(); },
   on: (name, fn) => { if (name === "session/event") eventHandler = fn; return () => {}; },
@@ -70,11 +81,11 @@ const ctx = {
 // sessionPersistence surface: list() + open() -> handle.read()/close()
 const persistence = {
   async list() {
-    return [{ header: { id: fixture.id, cwd: "fixture" }, revision: "r1" }];
+    return [{ header: { id: fixtureId, cwd: "fixture" }, revision: "r1" }];
   },
   async open(id, access) {
     assert.strictEqual(access, "read", "must open read-only");
-    assert.strictEqual(id, fixture.id);
+    assert.strictEqual(id, fixtureId);
     return {
       async read() { return { events }; },
       async close() {},
@@ -113,7 +124,7 @@ assert.deepStrictEqual(afterBackfill.current.totals, afterBackfill.allTime.total
 // --- 2) live events for the SAME session must not double-count --------------
 // session/event carries the same log's events; the ledger entry must be
 // recomputed, not added to.
-for (const e of events) eventHandler({ id: fixture.id, snapshotEvents: () => events }, e);
+for (const e of events) eventHandler({ id: fixtureId, snapshotEvents: () => events }, e);
 
 const afterLive = await hit("/dsh-usage-bar/summary");
 console.log("after live replay:", JSON.stringify(afterLive.current.totals), "sessions:", afterLive.backfilledSessions);
@@ -150,7 +161,7 @@ assert.deepStrictEqual(await hit("/dsh-usage-bar/daily"), daily1, "calendar must
 
 // --- 5) post-reset usage IS counted ----------------------------------------
 const later = { time: Date.now() + 60000, type: "assistant/message", data: { turn: 99, step: 1, usage: { inputTokens: 5, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 } } };
-eventHandler({ id: fixture.id, snapshotEvents: () => [...events, later] }, later);
+eventHandler({ id: fixtureId, snapshotEvents: () => [...events, later] }, later);
 const afterPost = await hit("/dsh-usage-bar/summary");
 console.log("post-reset: current:", JSON.stringify(afterPost.current.totals));
 assert.ok(afterPost.current.totals.uncachedInputTokens >= 5, "post-reset usage is counted in current");

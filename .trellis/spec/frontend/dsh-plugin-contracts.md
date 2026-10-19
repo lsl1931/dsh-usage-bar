@@ -148,11 +148,24 @@ where the store would be written to a tree the harness never reads.
 
 ### Folding usage
 
-The `tokenUsage` fold is the official semantics: `assistant/chunk` (type `usage`) is
-an early sample, `assistant/message`'s `data.usage` **replaces** it for the same
-attempt, and `llm/retry-started` closes the replacement slot so a retried attempt
-adds. `src/index.js`'s `foldUsage` matches `tokenUsageProjectionDefinition`
-(`dsh-token-meter/lib/types/usage-projection.js:86-119`) — do not "simplify" it.
+The `tokenUsage` fold is the official semantics (verified against
+`dsh-token-meter/lib/types/usage-projection.js`, 0.2.1-rc.2): a finalized
+`assistant/message`'s `data.usage` is the attempt's final sample; otherwise the
+sample is the **last usage chunk packed into the settlement's `data.stream`**
+(`lastAssistantStreamChunk(stream, 'usage')`), which is also how an
+`assistant/attempt` reports a failed or retried attempt. An attempt and the message
+that settles it share one `(turn, step)` replacement slot, so folding the attempt
+does not double count; `llm/retry-started` closes that slot so the retried attempt
+adds. `assistant/chunk` only exists in v3-and-earlier raw logs and fixtures — do not
+treat it as the primary source. `src/index.js`'s `foldUsage` matches
+`tokenUsageProjectionDefinition`; `selftest-official-fold.mjs` re-checks that parity
+against the real logs on every run — do not "simplify" the fold.
+
+The persistence backend is **bound late** with `ctx.inject(["sessionPersistence"], …)`,
+never captured with a one-shot `ctx.get()` at apply time: `ctx.get` does not
+re-resolve, so an early start would degrade to live-only for the process lifetime.
+Do not add `sessionPersistence` to `inject` either — that would drop the live-only
+fallback for deployments without a persistence backend.
 
 ### Accounting must be idempotent
 

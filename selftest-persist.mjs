@@ -7,14 +7,16 @@ import { apply } from "./lib/index.js";
 const warnings = [];
 const routes = new Map();
 const handlers = {};
-apply({
+const ctx = {
   logger: { warn: (m) => warnings.push(String(m)) },
   get: () => undefined,
+  inject: (deps, callback) => callback(ctx),
   connection: { requestRejection: () => undefined },
   effect: (fn) => { const d = fn(); return () => d && d(); },
   on: (n, fn) => { handlers[n] = fn; return () => {}; },
   webServer: { register: (r) => { routes.set(r.path, r); return () => {}; } },
-});
+};
+apply(ctx);
 
 const call = async (path, method = "GET", headers = {}) => {
   const res = { statusCode: 0, writeHead(c) { this.statusCode = c; }, end(b) { this.body = b; } };

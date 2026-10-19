@@ -34,6 +34,7 @@ let nonceValue = null;
 const ctx = {
   logger: { warn() {} },
   get: (name) => (name === "sessionPersistence" ? undefined : undefined),
+  inject: (deps, callback) => callback(ctx),
   connection: { requestRejection: () => fenceVerdict },
   effect: (fn) => { const disposer = fn(); return () => disposer && disposer(); },
   on: () => () => {},

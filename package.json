@@ -1,6 +1,6 @@
 {
   "name": "dsh-usage-bar",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DSH web plugin: total token consumption and cache-hit rate pinned above the sidebar Settings row.",
   "type": "module",
   "main": "lib/index.js",
@@ -26,7 +26,8 @@
     }
   },
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node selftest-all.mjs"
   },
   "engines": {
     "node": ">=22"

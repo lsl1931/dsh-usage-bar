@@ -32,14 +32,16 @@ function makeEvents(days, perDay) {
 function harness() {
   const handlers = {};
   const routes = new Map();
-  apply({
+  const ctx = {
     logger: { warn() {} },
     get: () => undefined,
+    inject: (deps, callback) => callback(ctx),
     connection: { requestRejection: () => undefined },
     effect: (fn) => { const d = fn(); return () => d && d(); },
     on: (n, fn) => { handlers[n] = fn; return () => {}; },
     webServer: { register: (r) => { routes.set(r.path, r); return () => {}; } },
-  });
+  };
+  apply(ctx);
   return { onEvent: handlers["session/event"], routes, disposed: handlers["session/disposed"] };
 }
 

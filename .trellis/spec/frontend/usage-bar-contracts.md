@@ -56,7 +56,7 @@ All four are `kind: "exact"` and pass the trust fence before any work.
 
 | Method | Path | Success | Body |
 |---|---|---|---|
-| GET | `/dsh-usage-bar/summary` | 200 | `{ current, allTime, backfilledSessions, resetAt }` |
+| GET | `/dsh-usage-bar/summary` | 200 | `{ current, allTime, backfilledSessions, resetAt, backfillFailures }` |
 | GET | `/dsh-usage-bar/daily` | 200 | `{ daily: { "YYYY-MM-DD": [uncached, output, cacheRead, cacheWrite] } }` |
 | POST | `/dsh-usage-bar/nonce` | 200 | `{ nonce: string }` |
 | POST | `/dsh-usage-bar/reset` | 200 | `{ ok: true }` |
@@ -70,6 +70,9 @@ All four are `kind: "exact"` and pass the trust fence before any work.
 
 ```ts
 export const inject: ["webServer", "connection"];
+// sessionPersistence is NOT a hard inject entry: it is bound late with
+// ctx.inject(["sessionPersistence"], …) so a deployment without a persistence
+// backend keeps live-only behavior instead of never applying.
 export function apply(ctx): void;
 
 // pure folds — signatures frozen (constraint C4)
@@ -81,7 +84,7 @@ export function dayKeyOf(ms: number): string | null;
 // ledger
 export function emptyStore(): Store;
 export function backfillOnce(store, sessions: AsyncIterable<{id, events}>): Promise<number>;
-export function persistedSessions(persistence, store): AsyncIterable<{id, events}>;
+export function persistedSessions(persistence, store, onError?): AsyncIterable<{id, events}>;
 export const allTimeTotals: (store) => totals;
 export const currentTotals: (store) => totals;
 export function allTimeDaily(store): Record<string, totals>;
@@ -182,7 +185,10 @@ store.totals.uncachedInputTokens += delta;
 | Calendar rollover | `selftest-calendar-rollover.mjs` | window + today marker + selected cell follow the local day across midnight |
 | Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/216 px; reset stays `flex:none`; items are `flex:0 1 auto` so the reset can never be the child that overflows (§7.4) |
 | Real-log ingestion | `selftest-migrate.mjs` | second pass adds 0 |
-| End-to-end | `selftest-integration.mjs` | backfill → live replay → reset via real `apply()` |
+| End-to-end | `selftest-integration.mjs` | backfill → live replay → reset via real `apply()`, fixtures read from the REAL logs |
+| Fold parity | `selftest-official-fold.mjs` | plugin fold == transcribed harness `tokenUsage` fold on four buckets, every real session |
+| Attempt usage | `selftest.mjs` §4 | attempt sample is replaced by its message; an attempt with no message still counts |
+| Locale lifecycle | `selftest-locale.mjs` | apply → dispose → apply does not re-register a taken namespace/locale |
 
 **This file is executable.** `selftest-spec-claims.mjs` asserts every claim in
 §2.1-§3.3 against the real module — the export list, the env precedence, the route

@@ -14,10 +14,19 @@ let nextId = 1;
 const realSetTimeout = globalThis.setTimeout;
 const realClearTimeout = globalThis.clearTimeout;
 
+// The history source is bound late, through ctx.inject. The fake provides an
+// empty one so apply() still schedules the 3s backfill pass this test checks; a
+// deployment without persistence simply skips it.
+const emptyPersistence = {
+  list: async () => [],
+  open: async () => ({ read: async () => ({ events: [] }), close: async () => {} }),
+};
+
 const disposers = [];
 const ctx = {
   logger: { warn() {} },
-  get: () => undefined,
+  get: (name) => (name === "sessionPersistence" ? emptyPersistence : undefined),
+  inject: (deps, callback) => callback(ctx),
   connection: { requestRejection: () => undefined },
   effect: (fn) => { const d = fn(); if (typeof d === "function") disposers.push(d); return () => d && d(); },
   on: () => () => {},

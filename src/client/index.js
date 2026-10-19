@@ -644,14 +644,22 @@ const inject = ["slots", "locale"];
 // ownership has to be claimed in the harness's own attribute - `data-plugin`, not
 // `data-plugin-css`. Measured in @deepseek-ai/dsh-client-modules/lib/client.js:
 //
-//   claimStyles (client.js:492-498), run at the end of every materialize:
+//   claimStyles (0.2.1-rc.2: client.js:625-631), run at the end of every
+//   materialize:
 //     document.querySelectorAll("style:not([data-plugin])")
 //       .forEach((el) => el.setAttribute("data-plugin", materializingPluginId));
-//   removeOwnedStyles (client.js:190-197), run on replace/prune/reload:
+//   removeOwnedStyles (0.2.1-rc.2: client.js:312-315), run on
+//   replace/prune/reload:
 //     remove every style[data-plugin] whose data-plugin === that plugin's id.
 //
-// A tag carrying only data-plugin-css is therefore invisible to removeOwnedStyles
-// but wide open to claimStyles: the next plugin to materialize adopts it, and the
+// 0.2.1-rc.2 also snapshots the untagged set BEFORE the factory runs and only
+// adopts tags created during it, which closes the "another plugin adopts our
+// tag" hazard; claiming data-plugin ourselves stays the correct, explicit
+// ownership proof and keeps the old-build adoption path working.
+//
+// That is exactly the hazard the explicit claim defends against: a tag carrying
+// only data-plugin-css is invisible to removeOwnedStyles but open to
+// claimStyles - the next plugin to materialize adopts it, and the
 // next time THAT plugin is replaced, pruned or rebuilt, our stylesheet is deleted
 // with it. materialize is memoized (client.js:670-674, loadCache), so this plugin's
 // factory never runs again and the tag never comes back - the pill and the popover
@@ -696,10 +704,19 @@ function apply(ctx) {
   if (typeof document === "undefined") return;
   ctx.effect(mountStyleTag, "dsh-usage-bar: stylesheet");
 
-  ctx.locale?.register?.(NS, {
-    zh: { title: "Token 用量" },
-    en: { title: "Token usage" },
-  });
+  // The dictionary registration is an effect, not a bare call: the locale
+  // service rejects a second registration of the same namespace + locale, so a
+  // module that is re-materialized (HMR revision, disable -> enable) would
+  // throw here and lose the whole client half until the page reloads. The
+  // first-party plugins wire it the same way (ui-sidebar: "dictionaries").
+  ctx.effect(
+    () =>
+      ctx.locale?.register?.(NS, {
+        zh: { title: "Token 用量" },
+        en: { title: "Token usage" },
+      }),
+    "dsh-usage-bar: locale dictionaries",
+  );
 
   ctx.slots.inject("sidebar.footer.action", () => {
     return ctx.slots.register(

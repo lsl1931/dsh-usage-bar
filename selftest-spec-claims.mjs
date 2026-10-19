@@ -24,14 +24,16 @@ ok(Object.keys(s.sessions).length === 0, "sessions starts empty");
 
 // §2.2 route shapes + fence, via the real apply()
 const routes = new Map(); const handlers = {};
-m.apply({
+const fakeCtx = {
   logger: { warn() {} },
   get: () => undefined,
+  inject: (deps, callback) => callback(fakeCtx),
   connection: { requestRejection: () => undefined },
   effect: (fn) => { const d = fn(); return () => d && d(); },
   on: (n, f) => { handlers[n] = f; return () => {}; },
   webServer: { register: (r) => { routes.set(r.path, r); return () => {}; } },
-});
+};
+m.apply(fakeCtx);
 for (const p of ["/dsh-usage-bar/summary","/dsh-usage-bar/daily","/dsh-usage-bar/nonce","/dsh-usage-bar/reset"]) {
   ok(routes.has(p), "route missing: " + p);
   ok(routes.get(p).kind === "exact", p + " must be kind:exact");
@@ -46,6 +48,7 @@ const r1 = await call("/dsh-usage-bar/summary");
 ok(r1.statusCode === 200, "summary 200");
 const body = JSON.parse(r1.body);
 ok("current" in body && "allTime" in body && "backfilledSessions" in body && "resetAt" in body, "summary fields");
+ok(typeof body.backfillFailures === "number", "summary reports backfillFailures");
 for (const k of ["totals","billedInputTokens","totalTokens"]) ok(k in body.current, "current." + k);
 const t = body.allTime.totals;
 ok(body.allTime.billedInputTokens === t.uncachedInputTokens + t.cacheReadTokens + t.cacheWriteTokens, "billedInputTokens formula");
@@ -61,13 +64,15 @@ ok(r4.statusCode === 403, "reset without nonce -> 403");
 
 // fence actually gates
 const routes2 = new Map();
-m.apply({
+const fakeCtx2 = {
   logger: { warn() {} }, get: () => undefined,
+  inject: (deps, callback) => callback(fakeCtx2),
   connection: { requestRejection: () => 401 },
   effect: (fn) => { const d = fn(); return () => d && d(); },
   on: () => () => {},
   webServer: { register: (r) => { routes2.set(r.path, r); return () => {}; } },
-});
+};
+m.apply(fakeCtx2);
 const res = { statusCode: 0, writeHead(c) { this.statusCode = c; }, end() {} };
 await routes2.get("/dsh-usage-bar/summary").handler({ method: "GET", headers: {} }, res);
 ok(res.statusCode === 401, "fence must reject with 401");

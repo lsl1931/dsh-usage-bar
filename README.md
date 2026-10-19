@@ -22,7 +22,7 @@
   cacheReadTokens / (uncachedInputTokens + cacheReadTokens + cacheWriteTokens)
   ```
 
-统计口径与官方一致：`assistant/chunk` 的 usage 是早期样本，`assistant/message` 的 usage 会**替换**同一 attempt 的早期样本；`llm/retry-started` 会关闭该替换槽，使重试后的用量**累加**。
+统计口径与官方一致（dsh 0.2.x / 会话格式 v4）：`assistant/message` 的 `data.usage` 是同一次尝试的**最终样本**；同一次尝试更早的样本（v4 把流打包进事件的 `data.stream`，`assistant/attempt` 也会带一份）会被它**替换**而不是重复累计；`llm/retry-started` 关闭该替换槽，使重试后的用量**累加**。`assistant/chunk` 只存在于 v3 及更早的原始日志与测试夹具里。
 
 历史数据**不自己扫盘**：通过 `ctx.sessionPersistence`（`list` / `open(id, "read")` / `read`）读取。这样由宿主负责：
 
@@ -82,6 +82,7 @@ node build.mjs     # 由 src/ 生成 lib/
 ## 自检
 
 ```bash
+npm test                           # 一键跑全部（每个用例独立进程，避免共享 DSH_HOME）
 node selftest.mjs                  # 折叠语义 + 真实日志解码
 node selftest-daily.mjs            # 同日替换 / 跨零点修正 / 重试累加 / 逐日命中率
 node selftest-reset.mjs            # 清零语义 + 路由契约（驱动真实 handler）
@@ -98,6 +99,8 @@ node selftest-pill-open.mjs        # 面板只由点击/键盘开合，悬停不
 node selftest-stylesheet.mjs       # 样式归属（data-plugin）与选择器约束
 node selftest-calendar-rollover.mjs # 30 天窗口按本地日历日滚动，不缓存昨天
 node selftest-spec-claims.mjs      # 代码规范里的契约与实现一致（可执行规范）
+node selftest-official-fold.mjs    # 与官方 tokenUsage fold 逐会话对账，防升级后口径漂移
+node selftest-locale.mjs           # 客户端 locale 注册可重复（HMR / 禁用再启用）
 ```
 
 > **写测试时注意**：任何调用 `apply()` 的测试都**必须**在最前面导入
@@ -105,9 +108,9 @@ node selftest-spec-claims.mjs      # 代码规范里的契约与实现一致（�
 > 你真实的账本（`<DSH_HOME>/storages/dsh-usage-bar/usage.json`）。
 > 这不是假设——开发过程中真的发生过一次。
 
-以上清单以 `ls selftest*.mjs` 为准（当前 16 个）——新增测试时请同步这里，别再漏掉。
+以上清单以 `ls selftest*.mjs` 为准（当前 18 个）——新增测试时请同步这里，别再漏掉。
 
-依赖本机会话日志的自检（`selftest.mjs` 的真实日志段、`selftest-migrate.mjs`、`selftest-integration.mjs`）在找不到会话日志时会**跳过**而不是失败，路径取自 `$DSH_HOME`，无硬编码。
+依赖本机会话日志的自检（`selftest.mjs` 的真实日志段、`selftest-migrate.mjs`、`selftest-integration.mjs`、`selftest-official-fold.mjs`）在机器上**完全没有**会话日志时会跳过而不是失败（路径取自 `$DSH_HOME` / `REAL_SESSIONS_DIR`，无硬编码）；但明明有日志却一条都解不出来时**判失败**——「静默空跑 + ALL PASS」比没有测试更糟。日志文件名按 vN 版本后缀匹配（`session.v4.jsonl.zstd`），不写死版本号。
 
 ## 性能
 
