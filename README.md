@@ -108,7 +108,7 @@ node selftest-locale.mjs           # 客户端 locale 注册可重复（HMR / �
 > 你真实的账本（`<DSH_HOME>/storages/dsh-usage-bar/usage.json`）。
 > 这不是假设——开发过程中真的发生过一次。
 
-以上清单以 `ls selftest*.mjs` 为准（当前 18 个）——新增测试时请同步这里，别再漏掉。
+以上清单以 `ls selftest*.mjs` 为准（当前 **18 个用例 + `selftest-all.mjs` 运行器**，共 19 个文件；运行器不计入用例数）——新增测试时请同步这里，别再漏掉。
 
 依赖本机会话日志的自检（`selftest.mjs` 的真实日志段、`selftest-migrate.mjs`、`selftest-integration.mjs`、`selftest-official-fold.mjs`）在机器上**完全没有**会话日志时会跳过而不是失败（路径取自 `$DSH_HOME` / `REAL_SESSIONS_DIR`，无硬编码）；但明明有日志却一条都解不出来时**判失败**——「静默空跑 + ALL PASS」比没有测试更糟。日志文件名按 vN 版本后缀匹配（`session.v4.jsonl.zstd`），不写死版本号。
 

@@ -22,7 +22,15 @@ if (files.length === 0) {
 const failed = [];
 for (const file of files) {
   const started = Date.now();
-  const result = spawnSync(process.execPath, [join(root, file)], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, [join(root, file)], {
+    encoding: "utf8",
+    // A live timer or an undrained event loop is exactly this plugin's failure
+    // mode; without a timeout one hung child would hang `npm test` forever
+    // instead of failing. A killed child reports status null, which already
+    // reads as FAIL below.
+    timeout: 120000,
+    killSignal: "SIGKILL",
+  });
   const ms = Date.now() - started;
   const ok = result.status === 0;
   const tail = (result.stdout || "").trim().split("\n").filter(Boolean).slice(-1)[0] ?? "";

@@ -121,18 +121,40 @@ assert.strictEqual(afterBackfill.backfilledSessions, 1, "the fixture session was
 assert.ok(afterBackfill.allTime.totals.uncachedInputTokens > 0, "real usage was read");
 assert.deepStrictEqual(afterBackfill.current.totals, afterBackfill.allTime.totals, "current == allTime before any reset");
 
-// --- 2) live events for the SAME session must not double-count --------------
-// session/event carries the same log's events; the ledger entry must be
-// recomputed, not added to.
-for (const e of events) eventHandler({ id: fixtureId, snapshotEvents: () => events }, e);
+// --- 2) live capture folds each delivery exactly once ----------------------
+// The fixture's events all carry `seq`, and the live fold seeds itself from the
+// session snapshot, so replaying them only exercises the watermark. A live
+// event WITHOUT a seq is the one that actually reaches foldApply - deliver one,
+// twice: the first delivery must add its sample, the second must be a no-op
+// (same turn+step and same buckets => the replacement slot short-circuits).
+const liveSession = { id: fixtureId, snapshotEvents: () => events };
+const live = {
+  time: Date.now(),
+  type: "assistant/message",
+  data: { turn: 7, step: 1, usage: { inputTokens: 7, outputTokens: 1, cacheReadTokens: 3, cacheWriteTokens: 0 } },
+};
 
+eventHandler(liveSession, live);
 const afterLive = await hit("/dsh-usage-bar/summary");
-console.log("after live replay:", JSON.stringify(afterLive.current.totals), "sessions:", afterLive.backfilledSessions);
+console.log("after one live delivery:", JSON.stringify(afterLive.current.totals), "sessions:", afterLive.backfilledSessions);
 assert.strictEqual(afterLive.backfilledSessions, 1, "still exactly one session");
 assert.deepStrictEqual(
   afterLive.allTime.totals,
-  afterBackfill.allTime.totals,
-  "replaying the same session's events must not change any total",
+  {
+    uncachedInputTokens: afterBackfill.allTime.totals.uncachedInputTokens + 7,
+    outputTokens: afterBackfill.allTime.totals.outputTokens + 1,
+    cacheReadTokens: afterBackfill.allTime.totals.cacheReadTokens + 3,
+    cacheWriteTokens: afterBackfill.allTime.totals.cacheWriteTokens,
+  },
+  "a live delivery adds its sample exactly once (recomputed over the snapshot, not added twice)",
+);
+
+eventHandler(liveSession, live);
+const afterReplay = await hit("/dsh-usage-bar/summary");
+assert.deepStrictEqual(
+  afterReplay.allTime.totals,
+  afterLive.allTime.totals,
+  "re-delivering the same event must not change any total",
 );
 
 // --- 3) a second backfill pass is a no-op ----------------------------------
@@ -156,7 +178,7 @@ const nonce = (await hit("/dsh-usage-bar/nonce", "POST")).nonce;
 const afterReset = await hit("/dsh-usage-bar/summary");
 console.log("after reset: current:", JSON.stringify(afterReset.current.totals), "allTime:", JSON.stringify(afterReset.allTime.totals));
 assert.deepStrictEqual(afterReset.current.totals, ZERO, "current must read zero after reset");
-assert.deepStrictEqual(afterReset.allTime.totals, afterBackfill.allTime.totals, "allTime must survive the reset");
+assert.deepStrictEqual(afterReset.allTime.totals, afterLive.allTime.totals, "allTime must survive the reset");
 assert.deepStrictEqual(await hit("/dsh-usage-bar/daily"), daily1, "calendar must survive the reset");
 
 // --- 5) post-reset usage IS counted ----------------------------------------
@@ -164,6 +186,10 @@ const later = { time: Date.now() + 60000, type: "assistant/message", data: { tur
 eventHandler({ id: fixtureId, snapshotEvents: () => [...events, later] }, later);
 const afterPost = await hit("/dsh-usage-bar/summary");
 console.log("post-reset: current:", JSON.stringify(afterPost.current.totals));
-assert.ok(afterPost.current.totals.uncachedInputTokens >= 5, "post-reset usage is counted in current");
+assert.deepStrictEqual(
+  afterPost.current.totals,
+  { uncachedInputTokens: 5, outputTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0 },
+  "post-reset current counts exactly the post-reset sample, and nothing replayed by the seed",
+);
 
 console.log("ALL PASS");

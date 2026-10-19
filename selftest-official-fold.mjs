@@ -126,6 +126,7 @@ if (files.length === 0) {
 }
 
 let compared = 0;
+let attemptOnlyNonZero = 0;
 const differences = [];
 for (const file of files) {
   let events;
@@ -140,6 +141,68 @@ for (const file of files) {
   if (!bucketsEqual(official, ours)) {
     differences.push({ file, official, ours });
   }
+  // How much teeth the corpus gives the assistant/attempt branch: an attempt
+  // whose stream reports real usage and that never settles a message.
+  const settled = new Set(
+    events.filter((e) => e.type === "assistant/message").map((e) => e.data?.turn + ":" + e.data?.step),
+  );
+  for (const event of events) {
+    if (event.type !== "assistant/attempt") continue;
+    if (settled.has(event.data?.turn + ":" + event.data?.step)) continue;
+    const sample = lastAssistantStreamChunk(event.data?.stream, "usage")?.usage;
+    if (sample !== undefined && (sample.inputTokens ?? 0) + (sample.outputTokens ?? 0) > 0) attemptOnlyNonZero += 1;
+  }
+}
+
+// --- synthetic guards -------------------------------------------------------
+// The real corpus can be blind here: on this machine every attempt that never
+// settles a message reports ZERO tokens, so the parity walk above would still
+// pass with the assistant/attempt branch deleted. These sequences go through
+// BOTH folds, and their expected totals are non-zero, so dropping the branch
+// fails this file.
+const attemptEvent = (turn, step, usage) => ({
+  type: "assistant/attempt",
+  data: { turn, step, stream: [{ type: "chunk", chunk: { type: "usage", usage } }] },
+});
+const synthetic = [
+  {
+    name: "attempt only (never settles a message)",
+    events: [attemptEvent(3, 1, { inputTokens: 30, outputTokens: 3 })],
+    expected: { uncachedInputTokens: 30, outputTokens: 3 },
+  },
+  {
+    name: "attempt replaced by its settling message",
+    events: [
+      attemptEvent(3, 2, { inputTokens: 30, outputTokens: 3 }),
+      { type: "assistant/message", data: { turn: 3, step: 2, usage: { inputTokens: 31, outputTokens: 4 } } },
+    ],
+    expected: { uncachedInputTokens: 31, outputTokens: 4 },
+  },
+  {
+    name: "attempt + retry-started + attempt adds",
+    events: [
+      attemptEvent(4, 1, { inputTokens: 10, outputTokens: 1 }),
+      { type: "llm/retry-started", data: { turn: 4, step: 1 } },
+      attemptEvent(4, 1, { inputTokens: 12, outputTokens: 2 }),
+    ],
+    expected: { uncachedInputTokens: 22, outputTokens: 3 },
+  },
+];
+for (const scenario of synthetic) {
+  const official = officialTokenUsage(scenario.events);
+  const ours = foldUsage(scenario.events).totals;
+  assert.ok(
+    bucketsEqual(official, ours),
+    "synthetic parity[" + scenario.name + "] official=" + JSON.stringify(official) + " plugin=" + JSON.stringify(ours),
+  );
+  assert.deepStrictEqual(
+    { uncachedInputTokens: ours.uncachedInputTokens, outputTokens: ours.outputTokens },
+    scenario.expected,
+    "synthetic total[" + scenario.name + "]",
+  );
+}
+if (attemptOnlyNonZero === 0) {
+  console.log("NOTE: no real session has a non-zero attempt-only sample; the synthetic cases guard that branch");
 }
 
 for (const difference of differences.slice(0, 5)) {

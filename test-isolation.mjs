@@ -23,9 +23,18 @@ export const TEST_DSH_HOME = sandbox;
 export const TEST_STORE_DIR = join(sandbox, "storages", "dsh-usage-bar");
 export const TEST_STORE_PATH = join(TEST_STORE_DIR, "usage.json");
 
-/** Real session logs, read-only. Empty when the machine has none. */
+/**
+ * Real session logs, read-only. Empty when the machine has none.
+ *
+ * Resolved BEFORE the redirect below and with the same precedence the plugin
+ * documents for the harness home (explicit override > `$DSH_HOME` > `~/.dsh`),
+ * so a machine whose sessions live under a custom DSH_HOME still finds its
+ * fixtures instead of silently reporting "no session logs".
+ */
 export const REAL_SESSIONS_DIR = join(
-  process.env.DSH_USAGE_BAR_REAL_HOME ?? join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".dsh"),
+  process.env.DSH_USAGE_BAR_REAL_HOME ??
+    process.env.DSH_HOME ??
+    join(process.env.USERPROFILE ?? process.env.HOME ?? ".", ".dsh"),
   "sessions",
 );
 
