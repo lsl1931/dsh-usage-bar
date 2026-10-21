@@ -20,9 +20,16 @@ const BASE = "/dsh-usage-bar";
 // stray cache/prefetch. Kept in module state across pill instances.
 let sharedNonce = null;
 
+// Six characters is the pill's budget: at the host's minimum sidebar width (264px)
+// the row has 223px of content box for "Σ <value> tokens 缓存命中 <pct>% 清零", and a
+// seven-character "123.45M" is what pushes the two words — not the number — over the
+// edge. So the 100M..1B band keeps one decimal ("123.5M", the second decimal is noise
+// at that magnitude) and the band's top rounds into the B tier instead of printing
+// "1000.0M". Every other tier already fits in six.
 function formatTokens(n) {
   if (!Number.isFinite(n) || n <= 0) return "0";
-  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 999.95e6) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e8) return (n / 1e6).toFixed(1) + "M";
   if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
   if (n >= 1e4) return (n / 1e3).toFixed(1) + "k";
   return String(Math.round(n));
@@ -738,32 +745,41 @@ const CSS =
   "[" + RAIL_ATTR + "] .dsh-usage-bar__root{flex:none;width:36px;max-width:100%}" +
   "[" + RAIL_ATTR + "] .dsh-usage-bar{justify-content:center;padding:0;height:36px;margin-bottom:0;border-radius:10px}" +
   ".dsh-usage-bar__sym{font-size:11px;line-height:1;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden}" +
-  ".dsh-usage-bar{box-sizing:border-box;container-type:inline-size;display:flex;align-items:center;gap:8px;width:100%;min-width:0;padding:6px 10px;margin:0 0 4px;" +
+  ".dsh-usage-bar{box-sizing:border-box;container-type:inline-size;display:flex;align-items:center;gap:6px;width:100%;min-width:0;padding:6px 9px;margin:0 0 4px;" +
   "border-radius:12px;background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary);" +
   "font-size:12px;line-height:16px;overflow:hidden;user-select:none;cursor:pointer}" +
   ".dsh-usage-bar:hover{background:rgba(128,128,140,.18)}" +
   // The pill is focusable (it is the popover's only trigger), so it needs a focus
   // ring of its own: hover is a background tint, which a keyboard user never sees.
   ".dsh-usage-bar:focus-visible{outline:2px solid var(--dsw-alias-link,#4c9aff);outline-offset:2px}" +
-  ".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:0 1 auto;min-width:0}" +
+  ".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:3px;white-space:nowrap;flex:0 1 auto;min-width:0}" +
   ".dsh-usage-bar .dsh-usage-bar__item>span{flex:none}" +
-  ".dsh-usage-bar .dsh-usage-bar__unit,.dsh-usage-bar .dsh-usage-bar__hitlabel{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}" +
-  // Width ladder (thresholds = measured natural widths of each tier; container
-  // queries resolve against the pill's CONTENT box, i.e. pill width - 20 padding):
-  //   >=272 -> full row;  217..271 -> drop the redundant unit word;  <=216 -> drop
-  //   the hit-rate label too.
-  // The label tier sits below the narrowest reachable content box (sidebar min 264
-  // -> pill 240 -> 220), so 缓存命中 survives at every width the host can produce;
-  // the tier only fires if the slot is ever squeezed further, where the shrinkable
-  // label ellipsizes instead. Numbers and 清零 stay flex:none, so the button can
-  // never again be the child that overflows the pill's overflow:hidden.
-  "@container (max-width:271px){.dsh-usage-bar .dsh-usage-bar__unit{display:none}}" +
-  "@container (max-width:216px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}" +
-  ".dsh-usage-bar .dsh-usage-bar__spacer{flex:1;min-width:4px}" +
+  // The words are the last thing allowed to give, not the first: only after every
+  // spacing lever below has been spent does a label ellipsize. The selector has to
+  // out-specify the atom rule above (0,3,0 beats 0,2,1) or flex:none would win and
+  // the label would instead paint over its neighbour.
+  ".dsh-usage-bar .dsh-usage-bar__item>.dsh-usage-bar__unit,.dsh-usage-bar .dsh-usage-bar__item>.dsh-usage-bar__hitlabel{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}" +
+  // Fit policy: NO word is ever removed. An earlier ladder hid "tokens" (and then
+  // 缓存命中) on narrow pills, which is what made the pill lose its text at the
+  // host's minimum sidebar width (264 -> pill 240) while "Σ 1.99B tokens 缓存命中
+  // 97.4% 清零" needs only a couple of pixels more than the space available. Space is
+  // therefore bought from gaps first: the row gap and the padding are a flat 2px/1px
+  // tighter than before, the spacer starts at 0 instead of 4, and the tier below
+  // squeezes the inner gaps and the reset button further. Container queries resolve
+  // against the pill's CONTENT box (pill width - horizontal padding) and cannot style
+  // the container itself, which is why gap/padding are flat rather than tiered.
+  //   <=244px content (~262px pill): inner gap 3 -> 2, reset padding 4 -> 3
+  // Numbers and 清零 stay flex:none, so the button can never be the child that
+  // overflows the pill's overflow:hidden.
+  "@container (max-width:244px){" +
+  ".dsh-usage-bar .dsh-usage-bar__item{gap:2px}" +
+  ".dsh-usage-bar__reset{padding:0 3px}" +
+  "}" +
+  ".dsh-usage-bar .dsh-usage-bar__spacer{flex:1;min-width:0}" +
   ".dsh-usage-bar .dsh-usage-bar__value{color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}" +
   ".dsh-usage-bar .dsh-usage-bar__hit{color:var(--dsw-alias-link,#4c9aff);font-variant-numeric:tabular-nums}" +
   ".dsh-usage-bar__reset{cursor:pointer;flex:none;display:inline-flex;align-items:center;justify-content:center;" +
-  "height:18px;min-width:18px;padding:0 5px;border:none;border-radius:8px;background:0 0;" +
+  "height:18px;min-width:18px;padding:0 4px;border:none;border-radius:8px;background:0 0;" +
   "color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:11px;line-height:1;transition:background .12s ease}" +
   ".dsh-usage-bar__reset:hover{background:rgba(128,128,140,.25);color:var(--dsw-alias-label-primary)}" +
   ".dsh-usage-bar__reset:disabled{opacity:.5;cursor:default}" +

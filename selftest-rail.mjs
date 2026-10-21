@@ -116,12 +116,12 @@ const collectText = (node) => {
 
 // The registration is `() => createElement(UsagePill)`, so Comp returns an
 // element; unwrap it and call the inner component (that is where hooks run).
-function renderPill(data, collapsed, open) {
+function renderPill(data, collapsed, open, totalTokens = 13800) {
   const summary = {
     current: {
       totals: { uncachedInputTokens: 1000, outputTokens: 500, cacheReadTokens: 12000, cacheWriteTokens: 300 },
       billedInputTokens: 11500,
-      totalTokens: 13800,
+      totalTokens,
     },
     allTime: {
       totals: { uncachedInputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
@@ -156,13 +156,28 @@ assert.ok(expandedText.includes("缓存命中") && expandedText.includes("清零
 assert.ok(css.includes("[data-sidebar-collapsed] .dsh-usage-bar__root"), "rail CSS keyed off the frame attribute");
 assert.ok(/\[data-sidebar-collapsed\] \.dsh-usage-bar__root\{flex:none;width:36px/.test(css), "rail root is a fixed 36px non-flexing box");
 assert.ok(!css.includes("flex:1 0 100%"), "no stale flex-basis:100% rule that overflows the nowrap row");
-// Narrow-width fit ladder: the pill is its own inline-size container, labels are
-// the degradable parts, and the number/reset atoms stay inflexible — so the reset
-// button can never be the child pushed past the pill's overflow:hidden (the bug
-// where 清零 lost its right half at the sidebar's 264px contract minimum).
-assert.ok(css.includes("container-type:inline-size"), "pill is an inline-size query container");assert.ok(css.includes(".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:4px;white-space:nowrap;flex:0 1 auto;min-width:0}"), "items are shrinkable");
-assert.ok(css.includes("@container (max-width:271px){.dsh-usage-bar .dsh-usage-bar__unit{display:none}}"), "unit word drops below 272px");
-assert.ok(css.includes("@container (max-width:216px){.dsh-usage-bar .dsh-usage-bar__hitlabel{display:none}}"), "hit label drops below 217px");
+// Pill fit: the pill is its own inline-size container, and NOTHING in it is ever
+// removed by width. An earlier ladder hid "tokens" (then 缓存命中) on narrow pills,
+// which is what emptied the pill at the host's minimum sidebar width - the row only
+// needed a couple of pixels more than the space there. Space now comes from gaps and
+// padding, and the number formatter stays inside six characters so the widest row the
+// data can produce still fits (see the formatter assertions below).
+assert.ok(css.includes("container-type:inline-size"), "pill is an inline-size query container");
+assert.ok(css.includes(".dsh-usage-bar .dsh-usage-bar__item{display:flex;align-items:center;gap:3px;white-space:nowrap;flex:0 1 auto;min-width:0}"), "items are shrinkable");
+assert.ok(!/\.dsh-usage-bar__(unit|hitlabel)\s*\{[^}]*display:none/.test(css), "no rule removes the unit word or the hit label");
+assert.ok(!/@container[^{}]*\{[^{}]*display:none/.test(css), "no container query hides content by width");
+assert.ok(css.includes("@container (max-width:244px){.dsh-usage-bar .dsh-usage-bar__item{gap:2px}.dsh-usage-bar__reset{padding:0 3px}}"), "the narrow tier only tightens gaps");
+assert.ok(css.includes(".dsh-usage-bar .dsh-usage-bar__spacer{flex:1;min-width:0}"), "the spacer yields all of its width when the row is tight");
+assert.ok(css.includes("padding:0 4px;border:none;border-radius:8px;background:0 0"), "the reset keeps a compact but non-zero hit target");
+// The number is the only thing the formatter is allowed to compact, and only where
+// six characters would otherwise become seven ("123.45M" -> "123.5M"), because at the
+// 264px sidebar the row has 223px and a seventh character is what used to push a word
+// out. No precision below 100M is touched, and the top of the band rolls into B
+// instead of printing "1000.0M".
+const mBand = collectText(renderPill("d", false, false, 123456789)).replace(/\s+/g, " ").trim();
+assert.ok(mBand.includes("123.5M"), "the 100M..1B band renders one decimal");
+const bRoll = collectText(renderPill("d", false, false, 999950000)).replace(/\s+/g, " ").trim();
+assert.ok(bRoll.includes("1.00B"), "the top of the M band rolls into the B tier");
 
 const railText = collectText(renderPill("d", true, false)).replace(/\s+/g, " ").trim();
 assert.strictEqual(railText, "14k", "rail renders the compact total only");

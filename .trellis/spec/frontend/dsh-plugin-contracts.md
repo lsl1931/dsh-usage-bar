@@ -312,23 +312,47 @@ verified-declared tokens.
   (`dsh-client-ui-layout/lib/client.js:282`), read via `closest(...)` — not from the
   slot's `wide` prop and not by measuring the pill.
 
-#### Narrow-width fit ladder
+#### Narrow-width fit
 
 The expanded sidebar is clamped to `[264, 420]` px
 (`dsh-client-ui-layout/lib/client.js:38`), and the footer row gives the pill
-`sidebarWidth - 24` px. The pill's full row (Σ + value + "tokens" + 缓存命中 +
-pct + 清零) measures 265–272 px of min-content in the harness font, so at the
-contract minimum the row overflows and `overflow:hidden` clips the **last**
-child — the 清零 button. Fixed by making the pill its own query container
-(`container-type:inline-size` on `.dsh-usage-bar`, never on `__root`: the popover
-panel is a child of `__root`, and per spec layout containment makes the container
-the containing block for fixed descendants — measured in Chrome 153 it does not
-re-anchor them, but do not depend on that. The pill has no positioned
-descendants, so the panel is safe either way) and degrading by priority: drop `tokens` below 272 px, drop
-the 缓存命中 label below 217 px (below the narrowest reachable content box of
-220 px, so the label survives every width the host can produce). Numbers and 清零 stay `flex:none` so the button
-can never be the clipped child again. Thresholds are measured natural widths of
-each tier, not guesses — see `selftest-rail.mjs`.
+`sidebarWidth - 24` px — so the narrowest pill is ~241 px, i.e. 223 px of content
+box after padding. The full row (Σ + value + "tokens" + 缓存命中 + pct + 清零)
+measures 242 px at 12 px Segoe UI/YaHei with the ORIGINAL 8/10/4/5 spacing: the
+row was 1 px over, and an earlier width ladder answered that by
+`display:none`-ing `tokens` below 272 px (then 缓存命中 below 217 px). That
+traded the product's words for two pixels, and at the minimum width it left the
+pill reading `Σ 1.99B 缓存命中 97.4% 清零` with no unit at all.
+
+The policy is now: **no word is ever removed by width.** Space is bought from
+layout instead — row gap 8→6, horizontal padding 10→9, item gap 4→3, reset padding
+5→4, spacer from a 4 px floor to 0 — and one container tier
+(`@container (max-width:244px)`) squeezes the item gap to 2 px and the reset to
+3 px, which is worth a further 6 px. The number formatter is the only thing
+allowed to compact, and only where six characters would become seven: the
+100M..1B band prints one decimal (`123.5M`) and its top rolls into `1.00B`
+instead of `1000.0M`. With that the widest row the data can produce
+(`999.9M` + `100.0%`) still fits 240 px with slack, and the pill never loses a
+label.
+
+The pill is its own query container (`container-type:inline-size` on
+`.dsh-usage-bar`, never on `__root`: the popover panel is a child of `__root`,
+and per spec layout containment makes the container the containing block for
+fixed descendants — measured in Chrome 153 it does not re-anchor them, but do not
+depend on that. The pill has no positioned descendants, so the panel is safe
+either way).
+
+Two consequences worth remembering:
+
+- A container query cannot style its own container, so `gap`/`padding` on
+  `.dsh-usage-bar` are flat values while the tiers can only reach descendants.
+- `.dsh-usage-bar__item>span{flex:none}` (0,2,1) out-specifies
+  `.dsh-usage-bar .dsh-usage-bar__unit` (0,2,0); the shrinkable-label rule must
+  therefore name the child explicitly (0,3,0) or the label paints over its
+  neighbour instead of ellipsizing.
+
+Numbers and 清零 stay `flex:none` so the button can never be the clipped child.
+All of the above is asserted by `selftest-rail.mjs`.
 
 ---
 

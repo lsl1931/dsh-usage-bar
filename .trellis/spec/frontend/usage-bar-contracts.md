@@ -183,7 +183,7 @@ store.totals.uncachedInputTokens += delta;
 | Style attribution | `selftest-rail.mjs`, `selftest-stylesheet.mjs` | `data-plugin-css` names the stylesheet; `data-plugin` claims ownership; only declared tokens |
 | Style ownership | `selftest-stylesheet.mjs` | re-apply does not duplicate the tag; disposing an older instance keeps the mounted instance's CSS; last dispose removes it |
 | Calendar rollover | `selftest-calendar-rollover.mjs` | window + today marker + selected cell follow the local day across midnight |
-| Pill fit ladder | `selftest-rail.mjs` | pill is an inline-size container; unit/label drop at 271/216 px; reset stays `flex:none`; items are `flex:0 1 auto` so the reset can never be the child that overflows (§7.4) |
+| Pill fit | `selftest-rail.mjs` | pill is an inline-size container; no width tier removes a word (the row fits at the host's 264px minimum sidebar); space comes from gap/padding, and the formatter stays within six characters; reset stays `flex:none`; items are `flex:0 1 auto` so the reset can never be the child that overflows (§7.4) |
 | Real-log ingestion | `selftest-migrate.mjs` | second pass adds 0 |
 | End-to-end | `selftest-integration.mjs` | backfill → live replay → reset via real `apply()`, fixtures read from the REAL logs |
 | Fold parity | `selftest-official-fold.mjs` | plugin fold == transcribed harness `tokenUsage` fold on four buckets, every real session |
