@@ -40,17 +40,14 @@
 
 ## 安装
 
-从 npm 安装（推荐，体积最小、可锁版本）：
-
-```bash
-dsh plugin --profile web add dsh-usage-bar
-```
-
-或直接从 GitHub 装（拉的是整个仓库，不锁版本）：
+直接从 GitHub 安装（推荐）：
 
 ```bash
 dsh plugin --profile web add https://codeload.github.com/lsl1931/dsh-usage-bar/tar.gz/refs/heads/main
 ```
+
+> 当前 npm 包尚未发布，暂不支持通过 `dsh plugin --profile web add dsh-usage-bar` 安装。
+> GitHub 安装拉取的是 `main` 分支快照，不锁定版本。
 
 > `github:lsl1931/dsh-usage-bar` 这种简写**在本机不可用**：pnpm 会把它解析成
 > `git+ssh://`，而本机没有 SSH 密钥，会以 `Host key verification failed` 失败。
