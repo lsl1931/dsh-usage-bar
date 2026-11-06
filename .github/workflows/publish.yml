@@ -46,4 +46,5 @@ jobs:
         run: npm publish --provenance --access public
       - name: Nothing to publish
         if: steps.token.outputs.present != 'true' || steps.check.outputs.published == 'true'
-        run: echo "Skipped: NPM_TOKEN is unset or this version is already on npm."
+        run: |
+          echo "Skipped: NPM_TOKEN is unset or this version is already on npm."
